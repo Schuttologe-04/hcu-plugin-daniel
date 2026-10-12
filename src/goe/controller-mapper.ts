@@ -13,6 +13,18 @@ function isPhaseRow(value: unknown): value is (number | null)[] {
   return Array.isArray(value) && value.length >= 3 && value.every(isNullableMeasurement);
 }
 
+function isAuxiliaryCategory(name: unknown): boolean {
+  return name === 'Home' || name === 'Solar';
+}
+
+/** Auxiliary measurements are optional and must never make a valid Grid unavailable. */
+function auxiliaryPower(names: readonly unknown[], powers: readonly unknown[], category: 'Home' | 'Solar'): number | null {
+  const index = names.indexOf(category);
+  if (index === -1 || names.lastIndexOf(category) !== index) return null;
+  const value: unknown = powers[index];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
 /** Decode untrusted HTTP JSON; category positions are determined by ccn. */
 export function mapControllerStatus(payload: unknown, host: string): Result<ControllerStatus> {
   if (!isRecord(payload)) {
@@ -29,7 +41,8 @@ export function mapControllerStatus(payload: unknown, host: string): Result<Cont
   if (!ccn.every((name: unknown) => typeof name === 'string')) {
     return failure('InvalidResponseError', 'Controller category names must be strings.');
   }
-  if (!ccp.every(isNullableMeasurement) || !cpc.every(isPhaseRow)) {
+  if (!ccp.every((value: unknown, index: number) => isAuxiliaryCategory(ccn[index]) || isNullableMeasurement(value))
+    || !cpc.every((value: unknown, index: number) => isAuxiliaryCategory(ccn[index]) || isPhaseRow(value))) {
     return failure('InvalidResponseError', 'Controller power or phase-current measurements are malformed.');
   }
 
@@ -59,6 +72,8 @@ export function mapControllerStatus(payload: unknown, host: string): Result<Cont
     reachable: true,
     gridPowerW,
     gridImportW: Math.max(gridPowerW, 0),
+    homePowerW: auxiliaryPower(ccn, ccp, 'Home'),
+    solarPowerW: auxiliaryPower(ccn, ccp, 'Solar'),
     gridPhaseCurrentsA: {
       l1: gridPhaseCurrents[0] ?? null,
       l2: gridPhaseCurrents[1] ?? null,

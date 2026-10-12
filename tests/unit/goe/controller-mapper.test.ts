@@ -27,6 +27,8 @@ describe('mapControllerStatus', () => {
         reachable: true,
         gridPowerW: 18430.77734,
         gridImportW: 18430.77734,
+        homePowerW: 18426.33203,
+        solarPowerW: -4.445766449,
         gridPhaseCurrentsA: { l1: 28.45207596, l2: 31.58973694, l3: 20.83134842 },
       },
     });
@@ -108,11 +110,11 @@ describe('mapControllerStatus', () => {
     });
   });
 
-  it('rejects malformed category names and measurements outside Grid', () => {
+  it('rejects malformed category names and invalid safety-critical Grid measurements', () => {
     expect(mapControllerStatus({ ...payload(), ccn: [3, 'Grid'] }, host)).toMatchObject({
       ok: false, error: { code: 'InvalidResponseError' },
     });
-    expect(mapControllerStatus({ ...payload(), ccp: ['bad', 100] }, host)).toMatchObject({
+    expect(mapControllerStatus({ ...payload(), ccp: [100, 'bad'] }, host)).toMatchObject({
       ok: false, error: { code: 'InvalidResponseError' },
     });
   });

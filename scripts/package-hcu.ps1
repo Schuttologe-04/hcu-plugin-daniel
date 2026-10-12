@@ -5,9 +5,9 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $taskRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $packageDirectory = Join-Path $taskRoot 'dist-package'
-$imageTag = 'com.psd.hcu.goe.loadmanagement:0.1.0'
-$archiveName = 'com.psd.hcu.goe.loadmanagement-0.1.0.tar.gz'
-$checksumName = 'com.psd.hcu.goe.loadmanagement-0.1.0.sha256'
+$imageTag = 'com.psd.hcu.goe.loadmanagement:0.2.0'
+$archiveName = 'com.psd.hcu.goe.loadmanagement-0.2.0.tar.gz'
+$checksumName = 'com.psd.hcu.goe.loadmanagement-0.2.0.sha256'
 $stagingDirectory = Join-Path $packageDirectory ('.package-build-' + [guid]::NewGuid().ToString('N'))
 
 function Invoke-Checked {

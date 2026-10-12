@@ -1,5 +1,5 @@
 import { failure, success, type Result } from '../domain/errors.js';
-import type { HcuEnvelope, HcuProtocolError, IncomingHcuMessage } from './message-types.js';
+import type { ControlRequestFeature, HcuEnvelope, HcuProtocolError, IncomingHcuMessage } from './message-types.js';
 
 export type DecodedHcuMessage =
   | { readonly kind: 'known'; readonly message: IncomingHcuMessage }
@@ -20,6 +20,59 @@ function optionalLanguage(body: Record<string, unknown>): boolean {
 function protocolError(value: unknown): value is HcuProtocolError {
   return record(value) && nonEmptyString(value['code'])
     && (value['message'] === undefined || typeof value['message'] === 'string');
+}
+
+// These bounds protect the read-only dispatcher from oversized collections.
+// Device IDs are opaque strings in Connect API 1.0.1, not necessarily UUIDs.
+const MAX_DEVICE_IDS = 256;
+const MAX_IDENTIFIER_LENGTH = 256;
+const MAX_CONTROL_FEATURES = 128;
+
+function deviceIdentifier(value: unknown): value is string {
+  return nonEmptyString(value) && value.length <= MAX_IDENTIFIER_LENGTH;
+}
+
+function deviceIds(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_DEVICE_IDS) return undefined;
+  const validated = new Set<string>();
+  for (const candidate of value) {
+    if (!deviceIdentifier(candidate)) return undefined;
+    validated.add(candidate);
+  }
+  return [...validated];
+}
+
+function controlFeatures(value: unknown): readonly ControlRequestFeature[] | undefined {
+  if (!Array.isArray(value) || value.length > MAX_CONTROL_FEATURES) return undefined;
+  const validated: ControlRequestFeature[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (!record(candidate) || !nonEmptyString(candidate['type'])
+      || candidate['type'].length > MAX_IDENTIFIER_LENGTH || seen.has(candidate['type'])) return undefined;
+    const type = candidate['type'];
+    seen.add(type);
+    if (type === 'currentPower') {
+      const currentPower = candidate['currentPower'];
+      // The feature is required by energy devices, but its Double value is optional.
+      if (currentPower !== undefined && (typeof currentPower !== 'number' || !Number.isFinite(currentPower))) return undefined;
+      validated.push({ type, ...(currentPower === undefined ? {} : { currentPower }) });
+    } else if (type === 'maintenance') {
+      const unreach = candidate['unreach'];
+      const lowBat = candidate['lowBat'];
+      const sabotage = candidate['sabotage'];
+      if ([unreach, lowBat, sabotage].some((field) => field !== undefined && typeof field !== 'boolean')) return undefined;
+      validated.push({ type,
+        ...(typeof unreach === 'boolean' ? { unreach } : {}),
+        ...(typeof lowBat === 'boolean' ? { lowBat } : {}),
+        ...(typeof sabotage === 'boolean' ? { sabotage } : {}),
+      });
+    } else {
+      // The sensor service rejects control even for future features. Retain only
+      // their discriminator so unknown target values cannot become a write path.
+      validated.push({ type });
+    }
+  }
+  return validated;
 }
 
 function invalid(): Result<never> {
@@ -52,6 +105,33 @@ export function decodeHcuMessage(input: unknown): Result<DecodedHcuMessage> {
     case 'PLUGIN_STATE_REQUEST':
       message = { ...base, type, body: {} };
       break;
+    case 'DISCOVER_REQUEST':
+      message = { ...base, type, body: {} };
+      break;
+    case 'INCLUSION_EVENT':
+    case 'EXCLUSION_EVENT': {
+      const identifiers = deviceIds(body['deviceIds']);
+      if (identifiers === undefined) return invalid();
+      message = { ...base, type, body: { deviceIds: identifiers } };
+      break;
+    }
+    case 'STATUS_REQUEST': {
+      if (body['deviceIds'] === undefined) {
+        message = { ...base, type, body: {} };
+      } else {
+        const identifiers = deviceIds(body['deviceIds']);
+        if (identifiers === undefined) return invalid();
+        message = { ...base, type, body: { deviceIds: identifiers } };
+      }
+      break;
+    }
+    case 'CONTROL_REQUEST': {
+      const deviceId = body['deviceId'];
+      const features = controlFeatures(body['features']);
+      if (!deviceIdentifier(deviceId) || features === undefined) return invalid();
+      message = { ...base, type, body: { deviceId, features } };
+      break;
+    }
     case 'CONFIG_TEMPLATE_REQUEST':
       if (!optionalLanguage(body)) return invalid();
       message = { ...base, type, body: typeof body['languageCode'] === 'string'

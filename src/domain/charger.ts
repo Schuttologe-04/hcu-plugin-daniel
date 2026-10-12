@@ -42,7 +42,9 @@ export interface ChargerStatus {
   /** Raw mcpd duration in milliseconds; zero means the minimum pause is disabled. */
   readonly minimumChargingPauseDuration: number;
   readonly modelStatus: number;
-  /** No index meaning or scaling is assumed. Missing nrg is explicitly null. */
+  /** Actual measured power from nrg[11] only; absent/invalid measurements remain null. */
+  readonly currentPowerW?: number | null;
+  /** Complete validated nrg array; no other index meanings or scaling are assumed. */
   readonly rawNrg: readonly (number | null)[] | null;
 }
 

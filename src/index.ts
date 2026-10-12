@@ -64,3 +64,7 @@ export { InstalledRuntime } from './orchestration/installed-runtime.js';
 export type { InstalledRuntimeOptions } from './orchestration/installed-runtime.js';
 export { FileInteractionStateStore } from './hcu/messages/interaction-state-store.js';
 export type { InteractionStateStore } from './hcu/messages/interaction-state.js';
+export { createDeviceRegistry, chargerDeviceId, CONTROLLER_DEVICE_IDS } from './hcu/devices/device-registry.js';
+export { projectDevice } from './hcu/devices/device-projection.js';
+export { PluginDeviceService } from './hcu/devices/plugin-device-service.js';
+export type { DeviceDefinition, PluginDevice, PluginDeviceFeature, PluginDeviceType } from './hcu/devices/device-types.js';

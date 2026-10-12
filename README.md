@@ -1,6 +1,8 @@
-# Homematic IP HCU / go-e – Phase 1 bis Phase 5
+# Homematic IP HCU / go-e – Version 0.2.0
 
-Dieses Projekt bildet das TypeScript-/Node.js-Fundament für ein Homematic-IP-HCU-Plugin. Der go-e Controller liefert den Netzbezug; mehrere go-e Charger liefern ihre Statuswerte. **Phase 1 liest und prüft diese Daten ausschließlich.** Die lokale Diagnose erstellt genau eine Momentaufnahme und beendet sich anschließend. **Phase 2 ergänzt eine deterministische Domänenengine und eine vollständig lokale Simulation.** **Phase 3 verbindet die HCU, ergänzt HCUweb und ausdrücklich gekennzeichnete TEST-App-Meldungen und führt die Engine optional mit echten read-only Messungen im Dry-Run aus.** **Phase 4 ergänzt einen gekapselten realen Actuator mit Ownership, Persistenz, Readback und doppelter Schreibfreigabe.** Sein vorbereiteter LIVE-Modus startet keine automatische Regelung; Hardware-Writes und der erste Canary wurden während der Entwicklung nicht ausgeführt.
+Dieses TypeScript-/Node.js-Plugin läuft als Installed-ARM64-Container auf der Homematic IP HCU. Der go-e Controller misst den Netzbezug; die bewährte Lastmanagement-Engine regelt aktivierte Charger über den geschützten `tcl`-/`frc`-Actuator. **Version 0.1.0 wurde vom Nutzer auf der realen HCU installiert und funktional geprüft.** Sie bleibt die unveränderte Referenz für Regelung, Ownership und Safety.
+
+**Version 0.2.0 ergänzt ausschließlich eine read-only HmIP-Geräteprojektion:** Netz, Hausverbrauch, Solar sowie aktivierte Charger stellen CurrentPower und Maintenance bereit. Sie verwenden denselben bestehenden Telemetrie-Snapshot, ohne zusätzliche Hardwarepolls oder Timer. Aus einem HmIP-Geräte-ControlRequest kann keine Wallbox-Steuerung entstehen. Die reale Geräteinklusion und Anzeige in HCU/App stehen für diese Erweiterung noch aus. [Technik und Abnahme](docs/phase6-hmip-plugin-devices.md), [Changelog](CHANGELOG.md).
 
 ## Sicherheitsgrenze
 
@@ -14,7 +16,7 @@ Der bestehende `GoEHttpClient` bietet weiterhin nur `readStatus()` und erzeugt a
 
 `hcu:dev`, `hcu:dry-run`, `hcu:test-message` und `probe` besitzen keinen realen go-e-Schreibpfad, auch bei versehentlich gesetztem `GOE_REAL_WRITES_ENABLED=true`. `simulate` bleibt vollständig offline und alle Netzwerkzugriffe in Tests sind gemockt. Der Remote-LIVE-Pfad verlangt **gleichzeitig** `executionMode=LIVE` und `GOE_REAL_WRITES_ENABLED=true`; HCUweb kann diese Freigabe nicht aktivieren. Das Installed-Image besitzt eine feste Schreibfähigkeit; autonome Aktionen benötigen zusätzlich den bewusst gesetzten persistenten Schalter `loadManagement.liveControlEnabled=true`.
 
-HCU-WebSocket, HCUweb-Konfiguration und optionale HCU-TEST-Meldungen sind in Phase 3 implementiert. Die Engine selbst erhält Messungen und Zeitstempel weiterhin explizit und startet keinen Timer. `hcu:dev` startet keinen Regellauf; Remote `hcu:live` bleibt PREPARED. Phase 5 ergänzt den getrennten Installed-Orchestrator, ARM64-Dockerfile und Packaging. Nach Erstinstallation läuft Telemetrie, während automatische Steuerung ausgeschaltet bleibt.
+HCU-Verbindung, Konfiguration, produktive JA/NEIN-Fragen und deren Persistenz sind vorhanden. Die Engine erhält Messungen und Zeitstempel weiterhin explizit. `hcu:dev` startet keinen Regellauf; Remote `hcu:live` bleibt PREPARED. Der Installed-Orchestrator führt die automatische Regelung nur bei operativer Aktivierung aus. Nach Erstinstallation läuft Telemetrie bei ausgeschalteter Steuerung; HmIP-Sensorgeräte werden unabhängig von diesem Schalter angeboten.
 
 ## Voraussetzungen und Installation
 
@@ -286,7 +288,7 @@ Gerätebindungen lassen sich im vorbereiteten LIVE-Prozess nur nach Stop und ern
 
 HCUweb zeigt Modus, tatsächliche Schreibfreigabe, Telemetriegesundheit, Engine/Actuator-Zustand, Ownership/Konflikte je Charger, eigenes `tcl`, eigene Pause, letzten bestätigten Write, Readback und Fehler. Das Journal behält maximal 50 Einträge und unterscheidet abstrakte Aktion, blockierten/versuchten/bestätigten Write, Konflikt, Readback-Abweichung und Fault. Sicherheitsparameter bleiben Infrastruktur-Defaults und sind keine zusätzliche HCUweb-Schreibfreigabe.
 
-Die Einzelheiten und der ausschließlich geplante erste Garage-Canary stehen in [docs/phase4-actuator-safety.md](docs/phase4-actuator-safety.md). **Keine echten go-e-Writes wurden während der Implementierung ausgeführt. Die reale Actuator-Wirkung ist auf Hardware noch ungetestet.**
+Die historischen Phase-4-Einzelheiten stehen in [docs/phase4-actuator-safety.md](docs/phase4-actuator-safety.md). **Keine echten go-e-Writes wurden während der Entwicklung durch Codex ausgeführt.** Diese Vorbereitung wurde anschließend zur vom Nutzer installierten und funktional geprüften 0.1.0-Referenz erweitert.
 
 ## Phase 5 – Installed HCU Plugin
 
@@ -304,17 +306,29 @@ npm run package:hcu
 
 Der Befehl prüft Tests/Typen/Build, baut `linux/arm64`, prüft Metadata, Architektur und Secrets, führt einen Container-Smoke ausschließlich mit Mocks und `--network none` aus und erzeugt unter `dist-package/` ein Docker-save-Archiv plus SHA-256. Docker Desktop mit laufender Linux-Engine ist Voraussetzung. [Exakte Installation, Aktivierungscheckliste und Emergency-Verhalten](docs/phase5-installed-plugin.md).
 
-Der tatsächlich ausgeführte ARM64-Build, die 1.429 bestandenen Tests, Paketgröße und Prüfsumme stehen im [Phase-5-Abschlussbericht](docs/phase5-completion-report.md).
+Der Referenz-Build von Version 0.1.0, seine 1.429 bestandenen Tests, Paketgröße und Prüfsumme stehen im historischen [Phase-5-Abschlussbericht](docs/phase5-completion-report.md).
+
+## Version 0.2.0 – HmIP-Messgeräte
+
+Discovery bietet `controller-grid` (GRID_CONNECTION_POINT), `controller-home` (ENERGY_METER), `controller-solar` (INVERTER) und für jeden aktivierten Charger mit gültigem Host `charger-<id>` (EV_CHARGER). Aktuell sind Garage und Links dabei, Rechts bleibt ausgeschlossen. Alle Geräte besitzen CurrentPower und Maintenance. Temporäres Offline entfernt keine Definition; Name oder IP verändern keine Device-ID.
+
+Grid bleibt signiert; Home wird direkt angezeigt; Solar wird negiert. Charger-Leistung kommt ausschließlich aus `nrg[11]`. Die Domäne bewahrt Float-Präzision, während die HmIP-Anzeige ganze Watt verwendet. Fehlende Werte werden protokollkonform weggelassen und niemals als 0 erfunden. Das Feature und tatsächliche Reachability bleiben getrennt.
+
+Inclusion ersetzt den aktuellen Included-Set-Snapshot, Exclusion beendet ausschließlich logische Publikation. StatusRequests werden mit derselben Message-ID beantwortet. Laufende StatusEvents enthalten nur geänderte Features; nach Reconnect wartet die Projektion auf frische Inclusion. Sensor-ControlRequests werden mit `success=false` abgelehnt. Config, Ownership und Nachrichtensession aus 0.1.0 bleiben kompatibel; neue Geräte-Persistenz ist nicht nötig.
+
+`npm run package:hcu` erzeugt das 0.2.0-ARM64-Paket neben vorhandenen 0.1.0-Archiven. Update zunächst mit erhaltenem `/data` prüfen. Die Verfügbarkeit von CurrentPower im Smartphone-Automationseditor und tatsächliche OS-Push-Zustellung müssen separat real abgenommen werden; die Erweiterung garantiert beides nicht. [Vollständiger Gerätevertrag und Abnahmeplan](docs/phase6-hmip-plugin-devices.md).
+
+Der [technische 0.2.0-Abschlussbericht](docs/version-0.2.0-completion-report.md) enthält die 1.585 bestandenen Tests, tatsächliche ARM64-Image-ID, Archiv-Prüfsumme, Dateiliste und den Git-/Safety-Audit.
 
 ## Offene Punkte vor der ersten manuellen Aktivierung
 
 - Der Nutzer hat den realen Phase-1-Test bestätigt: Controller/Grid sowie Garage und Links erreichbar, Rechts deaktiviert; Garage `car=2 / charging`, Links `car=1 / idle`. Die private Installed-Seed-Konfiguration übernimmt den bestätigten Controller-Host; die Engine selbst kontaktiert keine Geräte.
 - Die gelieferten Beispielantworten enthalten nicht alle abgefragten Felder; fehlende `fwv`, `ama` und `nrg` bleiben ausdrücklich `null`, anstatt Werte aus anderen Fixtures zu übernehmen.
-- `rawNrg` bleibt vollständig als `readonly (number | null)[] | null` erhalten. Es gibt in Phase 1 keine abgeleitete Charger-Leistung. Einheit, Skalierung und Firmwarebezug für eine spätere Interpretation werden in den [API-Notizen](docs/api-notes.md) als Prüfpunkt geführt.
+- Gültiges `rawNrg` bleibt vollständig erhalten. 0.2.0 nutzt ausschließlich die festgelegte Quelle `nrg[11]` für gemessene Watt; andere Indizes, EnergyCounter und Schätzwerte werden nicht neu interpretiert. Anzeige während realem Laden und Drosseln bleibt ein Abnahmepunkt.
 - `frc` und `modelStatus` bleiben Rohcodes. Die Simulation bildet die vom Nutzer bestätigte Pause-/Resume-Sequenz nach; eine reale Session-End-Erkennung ist weiterhin offen. `car=4` darf dafür nicht allein verwendet werden.
 - Actuator-Readback und Ownership sind gemockt getestet. Der Nutzer hat die Clear-Semantik für Firmware 59.4 manuell bestätigt; die Wirkung des installierten Plugins und der Session-Lifecycle benötigen weiterhin einen ausdrücklich gestarteten Hardwaretest. Eine Dry-Run-Quittierung beweist keine reale Gerätewirkung.
 - Die konservative Recovery-Schwelle und das gemeinsame Lastverhalten mehrerer Charger müssen später real geprüft werden. Es gibt keine aus `nrg` abgeleitete Leistungsprognose für Stromerhöhung oder Wiederanlauf.
-- HCU-Verbindung, HCUweb, Persistenz, Meldungen und Familienbenutzer-ACKs wurden vom Nutzer im Remote-Betrieb live bestätigt; eine OS-Push-Zustellung wurde nicht beobachtet. Installed-Netzwerk, Mount-Rechte und neue Diagnosefelder sind auf der realen HCU noch zu prüfen.
+- HCU-Verbindung, HCUweb, Persistenz und Meldungen gehören zur vom Nutzer funktional geprüften Installed-0.1.0-Basis. Neue HmIP-Devices, Maintenance und der Automationseditor sind für 0.2.0 noch real zu prüfen; eine OS-Push-Garantie besteht nicht.
 - Connect API 1.0.1 nennt für User-Message-Zeitstempel keine explizite Einheit; der Runtime-Adapter liefert Unix-Millisekunden. `ListUserMessages` wird nach der Feldtabelle als `Map<String, Long>` verarbeitet, obwohl das Dokumentationsbeispiel einen String zeigt. Beides ist beim Live-Test zu bestätigen.
 - Installed-Frage-/Antwort-IDs und Override sind unter `/data` persistent und werden mit der HCU abgeglichen. Das begrenzte Action-Journal bleibt im Speicher; alte Simulationssessions werden nicht wiederhergestellt.
 

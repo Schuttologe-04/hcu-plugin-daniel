@@ -40,6 +40,30 @@ export type ConfigUpdateRequest = Message<'CONFIG_UPDATE_REQUEST', {
   readonly languageCode?: string;
   readonly properties?: Readonly<Record<string, unknown>>;
 }>;
+export type DiscoverRequest = Message<'DISCOVER_REQUEST', Readonly<Record<string, never>>>;
+export type InclusionEvent = Message<'INCLUSION_EVENT', {
+  readonly deviceIds: readonly string[];
+}>;
+export type ExclusionEvent = Message<'EXCLUSION_EVENT', {
+  readonly deviceIds: readonly string[];
+}>;
+export type StatusRequest = Message<'STATUS_REQUEST', {
+  readonly deviceIds?: readonly string[];
+}>;
+
+/** Validated target features. Unsupported feature values are discarded, never executed. */
+export interface ControlRequestFeature {
+  readonly type: string;
+  readonly currentPower?: number;
+  readonly unreach?: boolean;
+  readonly lowBat?: boolean;
+  readonly sabotage?: boolean;
+}
+
+export type ControlRequest = Message<'CONTROL_REQUEST', {
+  readonly deviceId: string;
+  readonly features: readonly ControlRequestFeature[];
+}>;
 export type UserMessageAcknowledgementEvent = Message<'USER_MESSAGE_ACK_EVENT', {
   readonly ackType: HcuAcknowledgementType;
   readonly userMessageId: string;
@@ -67,6 +91,11 @@ export type IncomingHcuMessage =
   | PluginStateRequest
   | ConfigTemplateRequest
   | ConfigUpdateRequest
+  | DiscoverRequest
+  | InclusionEvent
+  | ExclusionEvent
+  | StatusRequest
+  | ControlRequest
   | UserMessageAcknowledgementEvent
   | CreateUserMessageResponse
   | DeleteUserMessageResponse

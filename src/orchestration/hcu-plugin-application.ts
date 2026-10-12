@@ -9,6 +9,7 @@ import { HcuUserMessageService } from '../hcu/messages/user-message-service.js';
 import { OverrideInteractionCoordinator } from '../hcu/messages/acknowledgement-router.js';
 import { PluginStateService } from '../hcu/plugin-state-service.js';
 import { PLUGIN_ID } from '../hcu/plugin-identity.js';
+import { PluginDeviceService } from '../hcu/devices/plugin-device-service.js';
 import type { HcuWebSocketClient } from '../hcu/websocket-client.js';
 import type { ChargerActuator } from '../goe/control/charger-actuator.js';
 import { DryRunRuntime } from './dry-run-runtime.js';
@@ -41,6 +42,7 @@ export class HcuPluginApplication {
   readonly dryRun: DryRunRuntime | null;
   readonly live: LiveRuntime | null;
   readonly installed: InstalledRuntime | null;
+  readonly devices: PluginDeviceService;
   readonly #pluginState: PluginStateService;
   #devSnapshot = initialRuntimeSnapshot();
   #running = false;
@@ -56,6 +58,8 @@ export class HcuPluginApplication {
       throw new Error('WRITE_BLOCKED: explicit LIVE gate and actuator are required.');
     }
     const client = options.client;
+    this.devices = new PluginDeviceService({ config: options.config, sender: client, idProvider: options.idProvider,
+      ...(options.logger === undefined ? {} : { logger: options.logger }) });
     this.#pluginState = new PluginStateService(client, options.idProvider, options.mode === 'INSTALLED_LIVE');
     this.messages = new HcuUserMessageService(client, options.idProvider, options.now);
     this.interactions = new OverrideInteractionCoordinator({
@@ -111,7 +115,8 @@ export class HcuPluginApplication {
       },
       onEndSession: () => this.interactions.endSession(),
       getInteractionStatus: () => ({ lastMessage: this.#lastHcuMessage, lastAnswer: this.interactions.lastAnswer }),
-      onSnapshot: () => {
+      onSnapshot: (snapshot) => {
+        this.#observeDevices(snapshot.probe);
         if (client.state === 'READY' || client.state === 'CONNECTED') this.#reconcileInstalledMessages(false);
       },
       onError: () => options.logger?.warn('Installed polling cycle failed; existing restrictions remain protected'),
@@ -133,6 +138,8 @@ export class HcuPluginApplication {
         else if (this.live !== null) await this.live.reconfigure(config);
         else if (this.installed !== null) await this.installed.reconfigure(config);
         else await this.interactions.endSession();
+        try { this.devices.configure(config); }
+        catch { options.logger?.warn('Plugin device configuration could not be projected'); }
       },
     });
   }
@@ -162,10 +169,12 @@ export class HcuPluginApplication {
       this.options.client.onMessage(async (message) => {
         if (!this.#running) return;
         if (this.#pluginState.handle(message)) return;
+        if (this.devices.handle(message)) return;
         if (await this.configService.handle(message)) return;
         await this.interactions.handleAcknowledgement(message);
       }),
       this.options.client.onState((state) => {
+        this.devices.setConnectionState(state);
         this.#devSnapshot = { ...this.#devSnapshot, connectionState: state };
         this.dryRun?.setConnectionState(state);
         this.live?.setConnectionState(state);
@@ -199,6 +208,11 @@ export class HcuPluginApplication {
     return pending;
   }
 
+  #observeDevices(report: ProbeReport | null): void {
+    try { this.devices.observe(report); }
+    catch { this.options.logger?.warn('Plugin device snapshot could not be published'); }
+  }
+
   #observeInstalledMessage(pending: Promise<Result<unknown>>): void {
     // HCU delivery must not delay fresh local telemetry. Only an explicit ACK
     // handled by the coordinator can grant an override; queuing grants none.
@@ -221,6 +235,7 @@ export class HcuPluginApplication {
 
   async stop(): Promise<void> {
     this.#running = false;
+    this.devices.setConnectionState('STOPPED');
     const messagesShutdown = this.interactions.shutdown();
     this.#unsubscribe.forEach((unsubscribe) => unsubscribe());
     this.#unsubscribe = [];

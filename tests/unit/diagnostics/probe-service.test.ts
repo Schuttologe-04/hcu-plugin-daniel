@@ -62,6 +62,45 @@ describe('probeDevices', () => {
     expect(http.readStatus).toHaveBeenCalledWith('links.test', CHARGER_STATUS_FIELDS);
   });
 
+  it('includes auxiliary controller and measured charger power in the existing three-read snapshot', async () => {
+    const readStatus = vi.fn<StatusReader['readStatus']>().mockImplementation(async (host) => {
+      if (host === 'controller.test') return success({
+        ccn: ['Solar', 'Grid', 'Home'], ccp: [-5000, 22000, 17000],
+        cpc: [[1, 2, 3, null], [1, 2, 3, null], [1, 2, 3, null]],
+      });
+      if (typeof garage !== 'object' || garage === null) throw new Error('Invalid fixture');
+      return success({ ...garage, nrg: [230, 230, 230, null, 14, 14, 14, 3300, 3300, 3300, null,
+        host === 'garage.test' ? 11000 : 0] });
+    });
+    const report = await probeDevices(configuration(), { http: { readStatus } });
+    expect(report.controller).toMatchObject({ ok: true, value: {
+      gridPowerW: 22000, gridImportW: 22000, homePowerW: 17000, solarPowerW: -5000,
+    } });
+    expect(report.chargers[0]).toMatchObject({ status: 'reachable', value: { currentPowerW: 11000 } });
+    expect(report.chargers[1]).toMatchObject({ status: 'reachable', value: { currentPowerW: 0 } });
+    expect(report.chargers[2]).toMatchObject({ status: 'disabled' });
+    expect(readStatus).toHaveBeenCalledTimes(3);
+    expect(readStatus).toHaveBeenCalledWith('controller.test', ['ccn', 'ccp', 'cpc']);
+  });
+
+  it('isolates invalid auxiliary energy telemetry without fabricating power or marking healthy devices offline', async () => {
+    const readStatus = vi.fn<StatusReader['readStatus']>().mockImplementation(async (host) => {
+      if (host === 'controller.test') return success({
+        ccn: ['Home', 'Grid', 'Solar'], ccp: ['invalid', 22000, null],
+        cpc: ['invalid optional phases', [1, 2, 3, null], [null, null, null, null]],
+      });
+      if (typeof garage !== 'object' || garage === null) throw new Error('Invalid fixture');
+      return success({ ...garage, nrg: [230, 230, 230, null, 14, 14, 14, 3300, 3300, 3300, null, 'invalid power'] });
+    });
+    const report = await probeDevices(configuration(), { http: { readStatus } });
+    expect(report.controller).toMatchObject({ ok: true, value: {
+      gridPowerW: 22000, gridImportW: 22000, homePowerW: null, solarPowerW: null,
+    } });
+    expect(report.chargers[0]).toMatchObject({ status: 'reachable', value: { currentPowerW: null, rawNrg: null } });
+    expect(report.chargers[1]).toMatchObject({ status: 'reachable', value: { currentPowerW: null, rawNrg: null } });
+    expect(readStatus).toHaveBeenCalledTimes(3);
+  });
+
   it('still returns charger snapshots when the controller is unavailable', async () => {
     const readStatus = vi.fn<StatusReader['readStatus']>().mockImplementation(async (host) => (
       host === 'controller.test' ? failure('TimeoutError', 'Controller timed out.') : success(garage)

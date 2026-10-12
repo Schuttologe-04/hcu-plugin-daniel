@@ -16,7 +16,8 @@ interface RawChargerStatus {
   readonly acp: boolean;
   readonly mcpd: number;
   readonly modelStatus: number;
-  readonly nrg?: readonly (number | null)[] | null;
+  /** Auxiliary telemetry is decoded separately from essential charger control fields. */
+  readonly nrg?: unknown;
 }
 
 function isNonNegativeInteger(value: unknown): value is number {
@@ -28,12 +29,18 @@ function isNullableInteger(value: unknown): value is number | null {
 }
 
 function isRawNrg(value: unknown): value is readonly (number | null)[] | null | undefined {
-  return value === undefined || value === null || (
-    Array.isArray(value)
-    && value.every((entry: unknown) => entry === null || (
-      typeof entry === 'number' && Number.isFinite(entry)
-    ))
-  );
+  if (value === undefined || value === null) return true;
+  if (!Array.isArray(value)) return false;
+  for (const entry of value) {
+    if (entry !== null && (typeof entry !== 'number' || !Number.isFinite(entry))) return false;
+  }
+  return true;
+}
+
+function currentPower(value: unknown): number | null {
+  if (!Array.isArray(value)) return null;
+  const measurement: unknown = value[11];
+  return typeof measurement === 'number' && Number.isFinite(measurement) ? measurement : null;
 }
 
 /** Validates external JSON before exposing it as a typed device response. */
@@ -52,8 +59,7 @@ function isRawChargerStatus(payload: unknown): payload is RawChargerStatus {
     && isNonNegativeInteger(raw['mca'])
     && typeof raw['acp'] === 'boolean'
     && isNonNegativeInteger(raw['mcpd'])
-    && isNonNegativeInteger(raw['modelStatus'])
-    && isRawNrg(raw['nrg']);
+    && isNonNegativeInteger(raw['modelStatus']);
 }
 
 export function mapChargerStatus(payload: unknown, config: ChargerConfig): Result<ChargerStatus> {
@@ -79,6 +85,8 @@ export function mapChargerStatus(payload: unknown, config: ChargerConfig): Resul
     allowChargingPause: payload.acp,
     minimumChargingPauseDuration: payload.mcpd,
     modelStatus: payload.modelStatus,
-    rawNrg: payload.nrg === undefined || payload.nrg === null ? null : Object.freeze([...payload.nrg]),
+    currentPowerW: currentPower(payload.nrg),
+    rawNrg: payload.nrg === undefined || payload.nrg === null || !isRawNrg(payload.nrg)
+      ? null : Object.freeze([...payload.nrg]),
   });
 }

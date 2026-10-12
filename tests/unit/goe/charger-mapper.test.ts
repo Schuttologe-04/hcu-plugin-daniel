@@ -42,6 +42,7 @@ describe('mapChargerStatus', () => {
       allowChargingPause: true,
       minimumChargingPauseDuration: 0,
       modelStatus: 15,
+      currentPowerW: null,
       rawNrg: null,
     });
   });
@@ -115,10 +116,20 @@ describe('mapChargerStatus', () => {
     { amp: null }, { amp: '14' }, { amp: Number.NaN }, { amp: Number.POSITIVE_INFINITY },
     { acu: '14' }, { ama: '32' }, { alw: 1 }, { frc: -1 }, { tcl: '6' },
     { mca: undefined }, { mca: -6 }, { acp: 'true' }, { mcpd: -1 }, { modelStatus: null },
-    { nrg: [1, '2'] }, { nrg: [Number.NaN] }, { nrg: [Number.POSITIVE_INFINITY] }, { nrg: {} },
   ])('rejects malformed external fields (%j)', (patch) => {
     expect(mapChargerStatus({ ...fixture('garage-idle'), ...patch }, garage)).toMatchObject({
       ok: false, error: { code: 'InvalidResponseError' },
     });
   });
+
+  it.each([[1, '2'], [Number.NaN], [Number.POSITIVE_INFINITY], {}])(
+    'isolates malformed auxiliary nrg without invalidating essential charger state (%j)', (nrg) => {
+      const status = mapped({ ...fixture('garage-idle'), nrg });
+      expect(status.reachable).toBe(true);
+      expect(status.currentPowerW).toBeNull();
+      expect(status.rawNrg).toBeNull();
+      expect(status.configuredCurrentA).toBe(14);
+      expect(status.minimumCurrentA).toBe(6);
+    },
+  );
 });

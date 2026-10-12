@@ -131,7 +131,83 @@ for (let restart = 0; restart < 2; restart += 1) {
   if (previousSessionId !== undefined) assert.equal(messageState.value.session.sessionId, previousSessionId, 'Restart must retain the persisted HCU session identity.');
   previousSessionId = messageState.value.session.sessionId;
 }
+
+// The new HmIP devices are a pure projection of already decoded telemetry.
+// Exercise the compiled release modules without another device poll, actuator
+// reference or live socket; the global fetch fence remains active throughout.
+const { createDeviceRegistry } = await import('/app/dist/hcu/devices/device-registry.js');
+const { projectDevice } = await import('/app/dist/hcu/devices/device-projection.js');
+const { PluginDeviceService } = await import('/app/dist/hcu/devices/plugin-device-service.js');
+const { mapControllerStatus } = await import('/app/dist/goe/controller-mapper.js');
+const { mapChargerStatus } = await import('/app/dist/goe/charger-mapper.js');
+const registry = createDeviceRegistry(seed.value);
+const expectedDeviceIds = ['controller-grid', 'controller-home', 'controller-solar', 'charger-garage', 'charger-links'];
+assert.deepEqual(registry.map(device => device.deviceId), expectedDeviceIds);
+assert.deepEqual(registry.map(device => device.deviceType), ['GRID_CONNECTION_POINT', 'ENERGY_METER', 'INVERTER', 'EV_CHARGER', 'EV_CHARGER']);
+assert(!registry.some(device => device.deviceId === 'charger-rechts'), 'Disabled Rechts must never be discoverable.');
+const controller = mapControllerStatus({
+  ccn: ['Solar', 'Grid', 'Home'], ccp: [-5000, -1000.4, 4000.2],
+  cpc: [[null, null, null], [1, 2, 3], [null, null, null]],
+}, seed.value.controller.host);
+assert(controller.ok, 'Compiled controller mapper must preserve the valid Grid snapshot.');
+const chargerReadings = seed.value.chargers.map(config => {
+  if (!config.enabled) return { status: 'disabled', reachable: false, config };
+  const power = config.id === 'garage' ? 1000 : 0;
+  const mapped = mapChargerStatus({
+    fna: config.name, fwv: '59.4', car: config.id === 'garage' ? 2 : 1,
+    amp: 14, acu: 14, ama: 16, tcl: null, alw: true, frc: 0,
+    mca: 6, acp: true, mcpd: 0, modelStatus: 15,
+    nrg: [...Array(11).fill(null), power],
+  }, config);
+  assert(mapped.ok, 'Compiled charger mapper must decode nrg[11].');
+  return { status: 'reachable', reachable: true, config, value: mapped.value };
+});
+const report = { controller, chargers: chargerReadings };
+const projected = registry.map(definition => projectDevice(definition, report));
+const powerFeature = device => device.features.find(feature => feature.type === 'currentPower');
+assert.equal(powerFeature(projected[0]).currentPower, -1000, 'Grid export must retain its signed value.');
+assert.equal(powerFeature(projected[1]).currentPower, 4000);
+assert.equal(powerFeature(projected[2]).currentPower, 5000, 'Solar projection must invert the raw sign.');
+assert.equal(powerFeature(projected[3]).currentPower, 1000);
+assert.equal(powerFeature(projected[4]).currentPower, 0, 'A genuine nrg[11] zero is a valid measurement.');
+const missingPowerReport = { ...report, chargers: chargerReadings.map(charger => charger.status === 'reachable'
+  ? { ...charger, value: { ...charger.value, currentPowerW: null, rawNrg: null } } : charger) };
+const missingPower = projectDevice(registry[3], missingPowerReport);
+assert(!Object.hasOwn(powerFeature(missingPower), 'currentPower'), 'Missing power must be omitted, never manufactured as zero.');
+assert.equal(missingPower.features.find(feature => feature.type === 'maintenance').unreach, false);
+const positiveSolarReport = { ...report, controller: { ok: true, value: { ...controller.value, solarPowerW: 500 } } };
+assert.equal(powerFeature(projectDevice(registry[2], positiveSolarReport)).currentPower, -500, 'Solar inversion must not use an absolute value.');
+const deviceMessages = [];
+let deviceMessageId = 0;
+const devices = new PluginDeviceService({ config: seed.value,
+  sender: { pluginId: environment.value.pluginId, send: message => { deviceMessages.push(message); return true; } },
+  idProvider: { nextId: () => `MOCK_DEVICE_MESSAGE_${deviceMessageId += 1}` },
+});
+devices.setConnectionState('READY');
+devices.observe(report);
+assert.equal(deviceMessages.length, 0, 'Unknown inclusion state must not publish speculative events.');
+devices.handle({ pluginId: environment.value.pluginId, id: 'MOCK_DISCOVERY', type: 'DISCOVER_REQUEST', body: {} });
+assert.equal(deviceMessages.at(-1).type, 'DISCOVER_RESPONSE');
+assert.deepEqual(deviceMessages.at(-1).body.devices.map(device => device.deviceId), expectedDeviceIds);
+devices.handle({ pluginId: environment.value.pluginId, id: 'MOCK_INCLUSION', type: 'INCLUSION_EVENT', body: { deviceIds: ['controller-grid', 'charger-garage'] } });
+assert.equal(deviceMessages.at(-1).type, 'STATUS_RESPONSE');
+const beforeRepeatedMeasurement = deviceMessages.length;
+devices.observe(report);
+assert.equal(deviceMessages.length, beforeRepeatedMeasurement, 'Equal projected measurements must be deduplicated.');
+devices.observe({ ...report, chargers: chargerReadings.map(charger => charger.status === 'reachable' && charger.config.id === 'garage'
+  ? { ...charger, value: { ...charger.value, currentPowerW: 1500 } } : charger) });
+assert.equal(deviceMessages.at(-1).type, 'STATUS_EVENT');
+assert.deepEqual(deviceMessages.at(-1).body, { deviceId: 'charger-garage', features: [{ type: 'currentPower', currentPower: 1500 }] });
+for (const deviceId of expectedDeviceIds) {
+  const requestId = `MOCK_CONTROL_${deviceId}`;
+  devices.handle({ pluginId: environment.value.pluginId, id: requestId, type: 'CONTROL_REQUEST', body: {
+    deviceId, features: [{ type: 'currentPower', currentPower: 0 }],
+  } });
+  assert.equal(deviceMessages.at(-1).type, 'CONTROL_RESPONSE');
+  assert.equal(deviceMessages.at(-1).id, requestId);
+  assert.equal(deviceMessages.at(-1).body.success, false, 'Every sensor device must reject control.');
+}
 assert.equal(networkAttempts, 0, 'Imports/persistence must not contact any device.');
 assert.equal(attemptedWrites, 0, 'Default-disabled installed mode must not request a control write.');
 assert.equal(mockedStatusReads, 4, 'Both reachable chargers must be read on first start and restart.');
-console.log(JSON.stringify({ status: 'CONTAINER_MOCK_SMOKE_PASSED', platform: 'linux/arm64', nodeVersion: process.versions.node, mountedRuntimeFiles: true, installedEntrypoint: true, configRestart: true, ownershipRestart: true, messageRestart: true, mockedStatusReads, networkAttempts, realHardwareWrites: 0 }));
+console.log(JSON.stringify({ status: 'CONTAINER_MOCK_SMOKE_PASSED', platform: 'linux/arm64', nodeVersion: process.versions.node, mountedRuntimeFiles: true, installedEntrypoint: true, configRestart: true, ownershipRestart: true, messageRestart: true, deviceProjection: true, discoveredDevices: expectedDeviceIds.length, readOnlyDeviceControl: true, mockedStatusReads, networkAttempts, realHardwareWrites: 0 }));
