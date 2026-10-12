@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+
+config.json
+data/
+dist/
+dist-package/
+node_modules/
+
+*.log
+coverage/
+.npm-cache/
+.tools/

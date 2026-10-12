@@ -1,0 +1,12 @@
+# Allowlist: local credentials, persisted state, tests and output never enter
+# the build context, including files added later without a matching exception.
+**
+!Dockerfile
+!.dockerignore
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.build.json
+!config.installed.json
+!src/
+!src/**

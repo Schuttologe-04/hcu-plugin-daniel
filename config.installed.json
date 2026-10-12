@@ -1,0 +1,24 @@
+{
+  "controller": { "host": "192.168.0.89" },
+  "loadManagement": {
+    "enabled": true,
+    "liveControlEnabled": false,
+    "gridLimitW": 19000,
+    "safetyReserveW": 500,
+    "triggerDurationSeconds": 30,
+    "controlIntervalSeconds": 4,
+    "ampStep": 1
+  },
+  "chargers": [
+    { "id": "garage", "name": "go-eCharger Garage", "host": "192.168.0.94", "enabled": true, "priority": 1 },
+    { "id": "links", "name": "go-eCharger Links", "host": "192.168.0.144", "enabled": true, "priority": 20 },
+    { "id": "rechts", "name": "go-eCharger Rechts", "host": "", "enabled": false, "priority": 20 }
+  ],
+  "http": { "timeoutMs": 3000 },
+  "notifications": {
+    "intervention": true,
+    "controllerConnectionError": true,
+    "chargerConnectionError": true,
+    "interactive": true
+  }
+}

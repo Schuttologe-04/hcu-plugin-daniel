@@ -1,0 +1,28 @@
+{
+  "name": "hcu-goe-readonly",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Homematic IP HCU integration with read-only diagnostics, dry-run simulation and a guarded go-e actuator",
+  "type": "module",
+  "engines": { "node": ">=24.0.0 <25" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "probe": "npm run build --silent && node dist/cli/probe.js",
+    "simulate": "npm run build --silent && node dist/cli/simulate.js",
+    "hcu:dev": "npm run build --silent && node --env-file-if-exists=.env dist/cli/hcu-dev.js",
+    "hcu:dry-run": "npm run build --silent && node --env-file-if-exists=.env dist/cli/hcu-dev.js --dry-run",
+    "hcu:test-message": "npm run build --silent && node --env-file-if-exists=.env dist/cli/hcu-dev.js --test-message",
+    "hcu:live": "npm run build --silent && node --env-file-if-exists=.env dist/cli/hcu-live.js",
+    "package:hcu": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-hcu.ps1"
+  },
+  "dependencies": { "pino": "^10.4.0", "ws": "^8.22.0" },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/ws": "^8.18.2",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.3"
+  }
+}
