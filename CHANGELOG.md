@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 – Unreleased, reale HCU-/App-Abnahme ausstehend
+## 0.2.0 – Released 13.10.2026
 
 ### Added
 
@@ -19,6 +19,15 @@
 - Keine neuen go-e-Schreibpfade, Hardwarepolls oder periodischen Timer.
 - Lastmanagement, Ownership, Firmware-Clear-Grenze, operative Aktivierung und bestehende Persistenz unverändert.
 - Keine automatische Geräteinstallation, Hardware-Writes, Git-Commits, Tags oder Releases während der Entwicklung.
+
+### Test
+
+- Erfolgreiche Installation auf der realen HCU
+- Fünf HmIP-Messgeräte eingebunden, Leistungswerte korrekt dargestellt
+- Geräte im Homematic-IP-Energie-Dashboard sichtbar
+- Numerische Automationsbedingungen funktionieren einschließlich Auslösung
+- Bekannte Einschränkung: Keine Darstellung als Home-Favoriten
+- Noch nicht gesondert abgenommene Hardware-/Fail-safe-Szenarien bleiben als solche gekennzeichnet
 
 ## 0.1.0
 

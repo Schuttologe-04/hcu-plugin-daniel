@@ -6,6 +6,7 @@ config.json
 data/
 dist/
 dist-package/
+handover/
 node_modules/
 
 *.log
