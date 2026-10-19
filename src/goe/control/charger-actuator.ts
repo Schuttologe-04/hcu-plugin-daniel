@@ -8,7 +8,7 @@ import { reconcileOwnership } from './actuator-reconciler.js';
 import { resolveActuatorPolicy, type ActuatorContext, type ActuatorPolicy } from './actuator-policy.js';
 import type { ActuatorResult, ActuatorStatus } from './actuator-result.js';
 import type { ChargerControlClient, ControlObservation, WriteGate } from './control-types.js';
-import { makeEmptyOwnership, validateOwnershipDocument, type OwnershipState, type OwnershipStore } from './ownership-state.js';
+import { canRebindOwnership, makeEmptyOwnership, validateOwnershipDocument, type OwnershipState, type OwnershipStore } from './ownership-state.js';
 
 export interface ChargerActuatorOptions {
   readonly client: ChargerControlClient;
@@ -30,6 +30,14 @@ interface ReadResult {
 interface Target {
   readonly tcl: number | null;
   readonly frc: number;
+}
+
+/** Status-read freshness may advance before a cancelled, never-sent action. */
+function ownershipEvidence(state: OwnershipState): string {
+  return JSON.stringify({ ...state, updatedAt: 0,
+    lastObservedState: state.lastObservedState === null ? null : {
+      ...state.lastObservedState, readStartedAtMs: 0, observedAtMs: 0,
+    } });
 }
 
 /** The only orchestrator permitted to use the four typed device operations.
@@ -70,8 +78,8 @@ export class ChargerActuator {
     return this.#serialize(async () => {
       if (this.#stopped) return failure('ConfigurationError', 'A stopped actuator cannot be reinitialized.');
       this.#initialized = false;
-      this.#states.clear();
-      this.#lastTclConfirmation.clear();
+      const states = new Map<string, OwnershipState>();
+      const lastTclConfirmation = new Map<string, number>();
       let loaded;
       try { loaded = await this.#store.load(); }
       catch { return failure('ConfigurationError', 'Actuator ownership state could not be loaded.'); }
@@ -79,27 +87,56 @@ export class ChargerActuator {
       if (loaded.value !== null) {
         const parsed = validateOwnershipDocument(loaded.value);
         if (!parsed.ok) return failure('ConfigurationError', 'Actuator ownership state is invalid.');
-        for (const state of parsed.value.chargers) this.#states.set(state.chargerId, state);
+        for (const state of parsed.value.chargers) states.set(state.chargerId, state);
+      }
+      // A failed evidence commit must not be forgotten by reloading an older
+      // document. Never overwrite divergent disk evidence with an in-memory repair.
+      for (const current of this.#states.values()) {
+        if (canRebindOwnership(current)) continue;
+        const validated = validateOwnershipDocument({ version: 1, chargers: [current] });
+        const saved = states.get(current.chargerId);
+        const validatedCurrent = validated.ok ? validated.value.chargers[0] : undefined;
+        if (validatedCurrent === undefined || saved === undefined
+          || ownershipEvidence(validatedCurrent) !== ownershipEvidence(saved)) {
+          return failure('ConfigurationError', 'Persisted actuator ownership differs from protected runtime evidence.');
+        }
+      }
+      // Reject every unsafe rebind before reading or committing any new target.
+      for (const config of chargers) {
+        if (!config.enabled) continue;
+        if (!isValidDeviceHost(config.host)) return failure('ConfigurationError', 'Actuator charger host is invalid.');
+        const saved = states.get(config.id);
+        if (saved !== undefined && saved.host !== config.host && !canRebindOwnership(saved)) {
+          return failure('ConfigurationError', 'Outstanding ownership prevents changing device bindings.');
+        }
       }
       // Retain removed/disabled records: their restrictions must never be forgotten.
       for (const config of chargers) {
         if (!config.enabled) continue;
-        if (!isValidDeviceHost(config.host)) return failure('ConfigurationError', 'Actuator charger host is invalid.');
-        const saved = this.#states.get(config.id);
+        const saved = states.get(config.id);
         // A user may rebind an unowned charger. Never transplant ownership to a new host.
-        const previous = saved === undefined || (saved.host !== config.host && saved.ownershipStatus === 'NONE'
-          && saved.pluginOwnedTcl === null && !saved.pluginOwnedPause && saved.pendingWrite === null)
+        const previous = saved === undefined || (saved.host !== config.host && canRebindOwnership(saved))
           ? makeEmptyOwnership(config, this.#now()) : saved;
         const read = await this.#read(config);
+        // A later outage must not disguise a conflict as a harmless initial outage.
+        const newlyUnavailable = previous.conflictStatus === null
+          && (previous.ownershipStatus === 'NONE' || previous.ownershipStatus === 'OWNED');
         const state = read.result.ok && this.#fresh(read.result.value, config)
           ? reconcileOwnership(previous, read.result.value)
-          : { ...previous, ownershipStatus: 'UNKNOWN' as const, conflictStatus: 'CHARGER_STATUS_UNAVAILABLE', updatedAt: this.#now() };
-        this.#states.set(config.id, state);
+          : { ...previous, ...(newlyUnavailable ? {
+            ownershipStatus: 'UNKNOWN' as const, conflictStatus: 'CHARGER_STATUS_UNAVAILABLE',
+          } : {}), updatedAt: this.#now() };
+        states.set(config.id, state);
         if (state.pluginOwnedTcl !== null && state.lastReadback !== null) {
-          this.#lastTclConfirmation.set(config.id, state.lastReadback.observedAtMs);
+          lastTclConfirmation.set(config.id, state.lastReadback.observedAtMs);
         }
       }
-      if (!await this.#persist()) return failure('ConfigurationError', 'Actuator ownership state could not be persisted.');
+      if (!await this.#save([...states.values()])) return failure('ConfigurationError', 'Actuator ownership state could not be persisted.');
+      if (this.#stopped) return failure('ConfigurationError', 'Actuator stopped during ownership initialization.');
+      this.#states.clear();
+      this.#lastTclConfirmation.clear();
+      for (const [id, state] of states) this.#states.set(id, state);
+      for (const [id, confirmedAt] of lastTclConfirmation) this.#lastTclConfirmation.set(id, confirmedAt);
       this.#initialized = true;
       return success(undefined);
     });

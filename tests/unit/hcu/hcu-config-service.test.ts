@@ -22,9 +22,10 @@ function setup() {
     save: vi.fn(async (config: AppConfig) => { saved.push(structuredClone(config)); return success(undefined); }),
   };
   const onConfigApplied = vi.fn<(config: AppConfig) => void | Promise<void>>();
+  const onRecoveryFailed = vi.fn<() => void | Promise<void>>();
   const getSnapshot = vi.fn(() => initialRuntimeSnapshot());
-  const service = new HcuConfigService({ pluginId, sender, store, initialConfig: makeConfig(), getSnapshot, onConfigApplied });
-  return { service, sent, saved, store, onConfigApplied, getSnapshot };
+  const service = new HcuConfigService({ pluginId, sender, store, initialConfig: makeConfig(), getSnapshot, onConfigApplied, onRecoveryFailed });
+  return { service, sent, saved, store, onConfigApplied, onRecoveryFailed, getSnapshot };
 }
 
 describe('HCU config update mapping', () => {
@@ -125,13 +126,73 @@ describe('HcuConfigService atomic persistence and protocol', () => {
   });
 
   it('defensively restores previous persisted configuration if a runtime adapter fails', async () => {
-    const { service, saved, sent, onConfigApplied } = setup();
+    const { service, saved, sent, onConfigApplied, onRecoveryFailed } = setup();
     onConfigApplied.mockRejectedValueOnce(new Error('runtime adapter failure'));
     await service.handle(update({ 'controller.host': 'changed.test' }));
     expect(service.current).toEqual(makeConfig());
     expect(saved.at(-1)).toEqual(makeConfig());
     expect(onConfigApplied).toHaveBeenLastCalledWith(makeConfig());
     expect(sent[0]?.body?.['status']).toBe('FAILED');
+    expect(onRecoveryFailed).not.toHaveBeenCalled();
+  });
+
+  it.each(['result', 'throw'] as const)('blocks control and further updates if disk rollback fails by %s', async (mode) => {
+    const { service, store, sent, onConfigApplied, onRecoveryFailed } = setup();
+    onConfigApplied.mockRejectedValueOnce(new Error('Runtime rejected bindings'));
+    const save = vi.mocked(store.save).mockResolvedValueOnce(success(undefined));
+    if (mode === 'result') save.mockResolvedValueOnce(failure('ConfigurationError', 'private filesystem details'));
+    else save.mockRejectedValueOnce(new Error('private filesystem details'));
+
+    await service.handle(update({ 'controller.host': 'new-controller.test' }));
+
+    expect(service.current).toEqual(makeConfig());
+    expect(onRecoveryFailed).toHaveBeenCalledOnce();
+    expect(onConfigApplied).toHaveBeenCalledOnce();
+    expect(onConfigApplied.mock.calls[0]?.[0].controller.host).toBe('new-controller.test');
+    expect(sent[0]).toMatchObject({ type: 'CONFIG_UPDATE_RESPONSE', body: { status: 'FAILED' } });
+    expect(sent[0]?.body?.['message']).toContain('nicht sicher wiederhergestellt');
+    expect(JSON.stringify(sent)).not.toContain('private');
+
+    await service.handle(update({ 'loadManagement.gridLimitW': 20_000 }, 'after-recovery-failure'));
+    expect(store.save).toHaveBeenCalledTimes(2);
+    expect(onConfigApplied).toHaveBeenCalledOnce();
+    expect(sent[1]?.body?.['status']).toBe('FAILED');
+    expect(onRecoveryFailed).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when runtime rollback fails despite restoring the disk configuration', async () => {
+    const { service, saved, sent, onConfigApplied, onRecoveryFailed } = setup();
+    onConfigApplied.mockRejectedValue(new Error('private runtime failure'));
+    await service.handle(update({ 'controller.host': 'new-controller.test' }));
+    expect(saved.at(-1)).toEqual(makeConfig());
+    expect(service.current).toEqual(makeConfig());
+    expect(onRecoveryFailed).toHaveBeenCalledOnce();
+    expect(sent[0]?.body?.['message']).toContain('Regelung gesperrt');
+    expect(JSON.stringify(sent)).not.toContain('private');
+  });
+
+  it('rejects queued updates after recovery failure even if the stop callback rejects', async () => {
+    const { service, store, sent, onConfigApplied, onRecoveryFailed } = setup();
+    onConfigApplied.mockRejectedValue(new Error('Runtime failure'));
+    onRecoveryFailed.mockRejectedValue(new Error('private stop failure'));
+    await expect(Promise.all([
+      service.handle(update({ 'controller.host': 'new-controller.test' }, 'first')),
+      service.handle(update({ 'loadManagement.gridLimitW': 20_000 }, 'queued')),
+    ])).resolves.toEqual([true, true]);
+    expect(onRecoveryFailed).toHaveBeenCalledOnce();
+    expect(store.save).toHaveBeenCalledTimes(2);
+    expect(sent.map((message) => message.body?.['status'])).toEqual(['FAILED', 'FAILED']);
+    expect(JSON.stringify(sent)).not.toContain('private');
+  });
+
+  it('accepts another update after a runtime rejection whose rollback succeeded', async () => {
+    const { service, sent, onConfigApplied, onRecoveryFailed } = setup();
+    onConfigApplied.mockRejectedValueOnce(new Error('Bindings rejected'));
+    await service.handle(update({ 'controller.host': 'rejected.test' }, 'rejected'));
+    await service.handle(update({ 'loadManagement.gridLimitW': 20_000 }, 'valid'));
+    expect(sent.map((message) => message.body?.['status'])).toEqual(['FAILED', 'APPLIED']);
+    expect(service.current.loadManagement.gridLimitW).toBe(20_000);
+    expect(onRecoveryFailed).not.toHaveBeenCalled();
   });
 
   it('serializes concurrent partial updates without losing previously applied changes', async () => {

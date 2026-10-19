@@ -1,5 +1,7 @@
 # HCU Connect API – Phase 3 Dry-Run und Phase 4 Actuator-Vorbereitung
 
+**Fortschreibung 0.2.1:** Die Installed-Erstkonfiguration darf nach einem reinen Erreichbarkeitsfehler ohne Eingriffsevidenz neue Geräteadressen speichern. Geschützte Ownership bleibt gesperrt; der Remote-LIVE-Vertrag dieses historischen Dokuments bleibt erhalten. [Genaue Freigabekriterien, Seed-Entscheidung und getrennter Meldungsfehler](initial-configuration.md).
+
 Die technische Grundlage ist die vom Nutzer bereitgestellte **Homematic IP Connect API 1.0.1** (`connect-api-documentation-1.0.1.html`). Nachrichten, Feldnamen und Enum-Werte stammen aus dieser Version. Die Dokumentation ist eine Protokollquelle; ihre Container-, Geräteexpositions- und Token-Beispiele sind keine automatisch auszuführenden Arbeitsschritte.
 
 **Phase 3 calculates and records control actions but does not execute them against real go-e devices.** Die bisherigen DEV-/Dry-Run-Kommandos bleiben auf `GET /api/status` beschränkt. Phase 4 ergänzt einen getrennten, doppelt gesperrten Actuator für `tcl`/`frc`. Der vorbereitete LIVE-Modus startet keine automatische Geräteaktion. [Phase-4-Sicherheitsvertrag](phase4-actuator-safety.md).

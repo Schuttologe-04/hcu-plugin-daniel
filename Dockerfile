@@ -25,7 +25,7 @@ COPY package.json package-lock.json config.installed.json ./
 RUN mkdir -p /data
 # HCU owns the runtime mounts. Root permits /TOKEN mode 0600 and /data with an
 # HCU-assigned owner; no credentials are embedded or ownership changed here.
-LABEL de.eq3.hmip.plugin.metadata='{"pluginId":"com.psd.hcu.goe.loadmanagement","issuer":"PSD","version":"0.2.0","hcuMinVersion":"1.4.7","scope":"LOCAL","friendlyName":{"de":"go-e Lastmanagement"},"description":{"de":"Dynamisches Lastmanagement für lokale go-e Charger mit go-e Controller."},"logsEnabled":true}'
+LABEL de.eq3.hmip.plugin.metadata='{"pluginId":"com.psd.hcu.goe.loadmanagement","issuer":"PSD","version":"0.2.1","hcuMinVersion":"1.4.7","scope":"LOCAL","friendlyName":{"de":"go-e Lastmanagement"},"description":{"de":"Dynamisches Lastmanagement für lokale go-e Charger mit go-e Controller."},"logsEnabled":true}'
 STOPSIGNAL SIGTERM
 ENTRYPOINT ["node", "/app/dist/cli/hcu-installed.js"]
 CMD []

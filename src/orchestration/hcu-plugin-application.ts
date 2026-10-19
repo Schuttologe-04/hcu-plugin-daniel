@@ -141,6 +141,13 @@ export class HcuPluginApplication {
         try { this.devices.configure(config); }
         catch { options.logger?.warn('Plugin device configuration could not be projected'); }
       },
+      onRecoveryFailed: async () => {
+        // Preserve HCU diagnostics while permanently fencing this process's control loop.
+        options.logger?.error('Configuration rollback failed; control stopped until restart');
+        if (this.installed !== null) await this.installed.stop();
+        else if (this.live !== null) await this.live.stop();
+        else await this.dryRun?.stop();
+      },
     });
   }
 

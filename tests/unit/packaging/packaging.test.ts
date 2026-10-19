@@ -23,7 +23,7 @@ function inspectedImage() {
   return { Id: `sha256:${'a'.repeat(64)}`, Size: 100_000_000, Os: 'linux', Architecture: 'arm64', Config: {
     Entrypoint: ['node', '/app/dist/cli/hcu-installed.js'], Cmd: [], ExposedPorts: {},
     Env: ['NODE_ENV=production', 'NODE_VERSION=24.21.0', 'GOE_REAL_WRITES_ENABLED=true'],
-    Labels: { 'de.eq3.hmip.plugin.metadata': JSON.stringify({ pluginId: 'com.psd.hcu.goe.loadmanagement', issuer: 'PSD', version: '0.2.0', hcuMinVersion: '1.4.7', scope: 'LOCAL', logsEnabled: true, friendlyName: { de: 'go-e Lastmanagement' }, description: { de: 'Local go-e charger management' } }) },
+    Labels: { 'de.eq3.hmip.plugin.metadata': JSON.stringify({ pluginId: 'com.psd.hcu.goe.loadmanagement', issuer: 'PSD', version: '0.2.1', hcuMinVersion: '1.4.7', scope: 'LOCAL', logsEnabled: true, friendlyName: { de: 'go-e Lastmanagement' }, description: { de: 'Local go-e charger management' } }) },
   } };
 }
 async function runValidator(image: unknown): Promise<string> {
@@ -35,7 +35,7 @@ async function runValidator(image: unknown): Promise<string> {
 
 describe('HCU packaging image validation', () => {
   it('accepts exactly the ARM64 installed image and returns safe package evidence', async () => {
-    expect(JSON.parse(await runValidator([inspectedImage()]))).toEqual({ imageId: `sha256:${'a'.repeat(64)}`, sizeBytes: 100_000_000, platform: 'linux/arm64', pluginId: 'com.psd.hcu.goe.loadmanagement', version: '0.2.0' });
+    expect(JSON.parse(await runValidator([inspectedImage()]))).toEqual({ imageId: `sha256:${'a'.repeat(64)}`, sizeBytes: 100_000_000, platform: 'linux/arm64', pluginId: 'com.psd.hcu.goe.loadmanagement', version: '0.2.1' });
   });
   it.each(['amd64', 'arm', 'unknown'])('rejects the %s architecture', async (architecture) => {
     await expect(runValidator([{ ...inspectedImage(), Architecture: architecture }])).rejects.toThrow();
@@ -61,7 +61,7 @@ describe('HCU packaging image validation', () => {
     const image = inspectedImage(); const modified = { ...image, Config: { ...image.Config, ExposedPorts: { '9001/tcp': {} } } };
     await expect(runValidator([modified])).rejects.toThrow();
   });
-  it.each([{ pluginId: 'other.plugin' }, { version: '0.1.0' }, { version: '0.3.0' }, { scope: 'CLOUD' }, { logsEnabled: false }, { issuer: 'other' }, { hcuMinVersion: '1.0.0' }])('rejects incompatible metadata %#', async (changed) => {
+  it.each([{ pluginId: 'other.plugin' }, { version: '0.1.0' }, { version: '0.2.0' }, { version: '0.3.0' }, { scope: 'CLOUD' }, { logsEnabled: false }, { issuer: 'other' }, { hcuMinVersion: '1.0.0' }])('rejects incompatible metadata %#', async (changed) => {
     const image = inspectedImage(); const original: unknown = JSON.parse(image.Config.Labels['de.eq3.hmip.plugin.metadata']);
     if (typeof original !== 'object' || original === null) throw new Error('invalid test setup');
     image.Config.Labels['de.eq3.hmip.plugin.metadata'] = JSON.stringify({ ...original, ...changed });
@@ -71,7 +71,7 @@ describe('HCU packaging image validation', () => {
 });
 
 describe('HCU package context and isolated smoke safety', () => {
-  it('keeps version 0.2.0 and the installed identity consistent in manifests, metadata and artifact names', async () => {
+  it('keeps version 0.2.1 and the installed identity consistent in manifests, metadata and artifact names', async () => {
     const manifest: unknown = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
     const lock: unknown = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8'));
     const dockerfile = await readFile(join(root, 'Dockerfile'), 'utf8');
@@ -80,7 +80,7 @@ describe('HCU package context and isolated smoke safety', () => {
     expect(label).toBeDefined();
     if (label === undefined) throw new Error('Missing release metadata label');
     const metadata: unknown = JSON.parse(label);
-    expect(PLUGIN_VERSION).toBe('0.2.0');
+    expect(PLUGIN_VERSION).toBe('0.2.1');
     expect(PLUGIN_ID).toBe('com.psd.hcu.goe.loadmanagement');
     expect(manifest).toMatchObject({ version: PLUGIN_VERSION });
     expect(lock).toMatchObject({ version: PLUGIN_VERSION, packages: { '': { version: PLUGIN_VERSION } } });
@@ -89,6 +89,7 @@ describe('HCU package context and isolated smoke safety', () => {
     expect(script).toContain(`$archiveName = '${PLUGIN_ID}-${PLUGIN_VERSION}.tar.gz'`);
     expect(script).toContain(`$checksumName = '${PLUGIN_ID}-${PLUGIN_VERSION}.sha256'`);
     expect(script).not.toContain(`${PLUGIN_ID}-0.1.0.tar.gz`);
+    expect(script).not.toContain(`${PLUGIN_ID}-0.2.0.tar.gz`);
   });
   it('calculates the known SHA-256 abc vector in PowerShell without running packaging', async () => {
     const dir = await directory();

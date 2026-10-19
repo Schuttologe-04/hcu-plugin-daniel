@@ -23,11 +23,11 @@ export function validateHcuImage(input) {
   let metadata;
   try { metadata = JSON.parse(config?.Labels?.['de.eq3.hmip.plugin.metadata']); }
   catch { throw new Error('Missing or invalid HCU metadata label.'); }
-  if (metadata?.pluginId !== 'com.psd.hcu.goe.loadmanagement' || metadata.version !== '0.2.0' ||
+  if (metadata?.pluginId !== 'com.psd.hcu.goe.loadmanagement' || metadata.version !== '0.2.1' ||
       metadata.issuer !== 'PSD' || metadata.hcuMinVersion !== '1.4.7' || metadata.scope !== 'LOCAL' ||
       metadata.logsEnabled !== true || metadata.friendlyName?.de !== 'go-e Lastmanagement' ||
       typeof metadata.description?.de !== 'string' || metadata.description.de.length === 0) {
-    throw new Error('HCU metadata does not match version 0.2.0.');
+    throw new Error('HCU metadata does not match version 0.2.1.');
   }
   return { imageId: image.Id, sizeBytes: image.Size, platform: 'linux/arm64', pluginId: metadata.pluginId, version: metadata.version };
 }

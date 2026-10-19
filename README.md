@@ -1,8 +1,10 @@
-# Homematic IP HCU / go-e – Version 0.2.0
+# Homematic IP HCU / go-e – Version 0.2.1
 
 Dieses TypeScript-/Node.js-Plugin läuft als Installed-ARM64-Container auf der Homematic IP HCU. Der go-e Controller misst den Netzbezug; die bewährte Lastmanagement-Engine regelt aktivierte Charger über den geschützten `tcl`-/`frc`-Actuator. **Version 0.1.0 wurde vom Nutzer auf der realen HCU installiert und funktional geprüft.** Sie bleibt die unveränderte Referenz für Regelung, Ownership und Safety.
 
-**Version 0.2.0 ergänzt ausschließlich eine read-only HmIP-Geräteprojektion:** Netz, Hausverbrauch, Solar sowie aktivierte Charger stellen CurrentPower und Maintenance bereit. Sie verwenden denselben bestehenden Telemetrie-Snapshot, ohne zusätzliche Hardwarepolls oder Timer. Aus einem HmIP-Geräte-ControlRequest kann keine Wallbox-Steuerung entstehen. Die reale Geräteinklusion und Anzeige in HCU/App stehen für diese Erweiterung noch aus. [Technik und Abnahme](docs/phase6-hmip-plugin-devices.md), [Changelog](CHANGELOG.md).
+**Version 0.2.1 korrigiert die Erstkonfiguration in einem anderen Netzwerk:** Ein reiner Erreichbarkeitsfehler vor jedem eigenen Write darf die Änderung der Seed-Adressen nicht blockieren. Bestehende Ownership-Evidenz, Konflikte und offene Writes bleiben geschützt. Der Seed und die vollständige Konfigurationsvalidierung bleiben unverändert; es entsteht kein neuer go-e-Schreibpfad. [Hotfix, Sicherheitsgrenze und Vorgehen](docs/initial-configuration.md).
+
+**Version 0.2.0 ergänzte eine read-only HmIP-Geräteprojektion:** Netz, Hausverbrauch, Solar sowie aktivierte Charger stellen CurrentPower und Maintenance aus dem bestehenden Telemetrie-Snapshot bereit. Der Nutzer hat die reale Geräteinklusion, Leistungsanzeige, das Energie-Dashboard und numerische Automationsbedingungen einschließlich Auslösung bestätigt; Home-Favoriten werden nicht unterstützt. Aus einem HmIP-Geräte-ControlRequest kann keine Wallbox-Steuerung entstehen. [Technik](docs/phase6-hmip-plugin-devices.md), [Changelog](CHANGELOG.md). Diese Bestätigung ersetzt keine gesonderte Abnahme des 0.2.1-Hotfixes.
 
 ## Sicherheitsgrenze
 
@@ -316,7 +318,7 @@ Grid bleibt signiert; Home wird direkt angezeigt; Solar wird negiert. Charger-Le
 
 Inclusion ersetzt den aktuellen Included-Set-Snapshot, Exclusion beendet ausschließlich logische Publikation. StatusRequests werden mit derselben Message-ID beantwortet. Laufende StatusEvents enthalten nur geänderte Features; nach Reconnect wartet die Projektion auf frische Inclusion. Sensor-ControlRequests werden mit `success=false` abgelehnt. Config, Ownership und Nachrichtensession aus 0.1.0 bleiben kompatibel; neue Geräte-Persistenz ist nicht nötig.
 
-`npm run package:hcu` erzeugt das 0.2.0-ARM64-Paket neben vorhandenen 0.1.0-Archiven. Update zunächst mit erhaltenem `/data` prüfen. Die Verfügbarkeit von CurrentPower im Smartphone-Automationseditor und tatsächliche OS-Push-Zustellung müssen separat real abgenommen werden; die Erweiterung garantiert beides nicht. [Vollständiger Gerätevertrag und Abnahmeplan](docs/phase6-hmip-plugin-devices.md).
+Der aktuelle `npm run package:hcu`-Pfad erzeugt ein 0.2.1-ARM64-Paket neben vorhandenen älteren Archiven. Paketmetadaten allein belegen keinen bereits ausgeführten Build. Update mit erhaltenem `/data` prüfen. Numerische Automationsbedingungen wurden für 0.2.0 vom Nutzer bestätigt; tatsächliche OS-Push-Zustellung bleibt gesondert zu prüfen. [Gerätevertrag](docs/phase6-hmip-plugin-devices.md), [0.2.1-Erstkonfiguration](docs/initial-configuration.md).
 
 Der [technische 0.2.0-Abschlussbericht](docs/version-0.2.0-completion-report.md) enthält die 1.585 bestandenen Tests, tatsächliche ARM64-Image-ID, Archiv-Prüfsumme, Dateiliste und den Git-/Safety-Audit.
 
@@ -328,7 +330,7 @@ Der [technische 0.2.0-Abschlussbericht](docs/version-0.2.0-completion-report.md)
 - `frc` und `modelStatus` bleiben Rohcodes. Die Simulation bildet die vom Nutzer bestätigte Pause-/Resume-Sequenz nach; eine reale Session-End-Erkennung ist weiterhin offen. `car=4` darf dafür nicht allein verwendet werden.
 - Actuator-Readback und Ownership sind gemockt getestet. Der Nutzer hat die Clear-Semantik für Firmware 59.4 manuell bestätigt; die Wirkung des installierten Plugins und der Session-Lifecycle benötigen weiterhin einen ausdrücklich gestarteten Hardwaretest. Eine Dry-Run-Quittierung beweist keine reale Gerätewirkung.
 - Die konservative Recovery-Schwelle und das gemeinsame Lastverhalten mehrerer Charger müssen später real geprüft werden. Es gibt keine aus `nrg` abgeleitete Leistungsprognose für Stromerhöhung oder Wiederanlauf.
-- HCU-Verbindung, HCUweb, Persistenz und Meldungen gehören zur vom Nutzer funktional geprüften Installed-0.1.0-Basis. Neue HmIP-Devices, Maintenance und der Automationseditor sind für 0.2.0 noch real zu prüfen; eine OS-Push-Garantie besteht nicht.
+- HCU-Verbindung, HCUweb, Persistenz und Meldungen gehören zur vom Nutzer funktional geprüften Installed-0.1.0-Basis. Für 0.2.0 wurden Geräteinklusion, Leistungsanzeige, Energie-Dashboard und numerische Automationsauslösung bestätigt. Weitere Maintenance-/Hardware-/Fail-safe-Szenarien und der 0.2.1-Hotfix benötigen eigene Abnahme; eine OS-Push-Garantie besteht nicht.
 - Connect API 1.0.1 nennt für User-Message-Zeitstempel keine explizite Einheit; der Runtime-Adapter liefert Unix-Millisekunden. `ListUserMessages` wird nach der Feldtabelle als `Map<String, Long>` verarbeitet, obwohl das Dokumentationsbeispiel einen String zeigt. Beides ist beim Live-Test zu bestätigen.
 - Installed-Frage-/Antwort-IDs und Override sind unter `/data` persistent und werden mit der HCU abgeglichen. Das begrenzte Action-Journal bleibt im Speicher; alte Simulationssessions werden nicht wiederhergestellt.
 

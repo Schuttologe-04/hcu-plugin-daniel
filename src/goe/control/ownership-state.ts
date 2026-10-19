@@ -172,3 +172,43 @@ export function validateOwnershipDocument(input: unknown): Result<OwnershipDocum
   }
   return success({ version: 1, chargers });
 }
+
+/** A new binding must never discard an uncertain write or ownership evidence. */
+export function canRebindOwnership(input: OwnershipState): boolean {
+  const validated = validateOwnershipDocument({ version: 1, chargers: [input] });
+  const entry = validated.ok ? validated.value.chargers[0] : undefined;
+  if (entry === undefined || entry.baseline !== null || entry.pluginOwnedTcl !== null
+    || entry.pluginOwnedPause || entry.pendingWrite !== null) return false;
+
+  if (entry.ownershipStatus === 'NONE') {
+    if (entry.conflictStatus !== null) return false;
+    const confirmed = entry.lastConfirmedWrite;
+    const readback = entry.lastReadback;
+    if (confirmed === null && readback === null) return true;
+    const observed = entry.lastObservedState;
+    if (confirmed === null || readback === null || observed === null
+      || confirmed.confirmedAtMs !== readback.observedAtMs
+      || observed.readStartedAtMs < readback.readStartedAtMs || observed.observedAtMs < readback.observedAtMs
+      || entry.updatedAt < observed.observedAtMs
+      || observed.tcl !== readback.tcl || observed.frc !== readback.frc
+      || observed.loe !== false || readback.loe !== false) return false;
+    switch (confirmed.action.type) {
+      case 'PAUSE': return false;
+      case 'SET_TEMPORARY_CURRENT_LIMIT': return readback.tcl === confirmed.action.amps;
+      case 'RESUME': return readback.frc === 0;
+      // CLEAR may restore a foreign numeric baseline via the typed setter. The
+      // released record no longer retains that baseline, so require consistent
+      // confirmed readback rather than inventing a universal null-only meaning.
+      case 'CLEAR_TEMPORARY_CURRENT_LIMIT': return true;
+    }
+  }
+
+  if (entry.ownershipStatus !== 'UNKNOWN' || entry.conflictStatus !== 'CHARGER_STATUS_UNAVAILABLE'
+    || entry.lastConfirmedWrite !== null || entry.lastReadback !== null) return false;
+
+  // A never-controlled, unreachable seed host is not outstanding ownership.
+  // An earlier foreign limit/pause or native-balancing uncertainty is not this exception.
+  const observed = entry.lastObservedState;
+  return observed === null || (entry.updatedAt >= observed.observedAtMs
+    && observed.tcl === null && observed.frc === 0 && observed.loe === false);
+}

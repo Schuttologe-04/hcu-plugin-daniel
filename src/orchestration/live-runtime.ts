@@ -10,6 +10,7 @@ import type { WriteGate } from '../goe/control/control-types.js';
 import type { ChargerActuator } from '../goe/control/charger-actuator.js';
 import type { ActuatorContext } from '../goe/control/actuator-policy.js';
 import type { ActuatorResult } from '../goe/control/actuator-result.js';
+import { canRebindOwnership } from '../goe/control/ownership-state.js';
 import { LoadManager } from '../load-management/load-manager.js';
 import type { ControlAction } from '../load-management/control-action.js';
 import { ActionJournal, summarizeCharger } from './action-journal.js';
@@ -110,9 +111,9 @@ export class LiveRuntime {
   async reconfigure(config: AppConfig, lifecycle: { readonly preserveOverride?: boolean } = {}): Promise<void> {
     if (this.#stopped) throw new Error('A stopped live runtime cannot be reconfigured.');
     if (this.#busy) throw new Error('A live operation is still in progress.');
-    // A changed host/disabled charger cannot silently detach outstanding ownership.
-    const outstanding = this.options.actuator.states.some((state) => state.pluginOwnedTcl !== null
-      || state.pluginOwnedPause || state.pendingWrite !== null || state.ownershipStatus !== 'NONE');
+    // Keep the global safety fence for actual or uncertain control history.
+    // An unreachable, never-controlled seed charger is not such history.
+    const outstanding = this.options.actuator.states.some((state) => !canRebindOwnership(state));
     const binding = (value: AppConfig): string => JSON.stringify({ controller: value.controller.host,
       chargers: value.chargers.map(({ id, host, enabled }) => ({ id, host, enabled })).sort((a, b) => a.id.localeCompare(b.id)) });
     const bindingsChanged = binding(config) !== binding(this.#config);
@@ -120,8 +121,9 @@ export class LiveRuntime {
       ? 'Outstanding ownership prevents changing device bindings.'
       : 'Changing LIVE device bindings requires a stopped runtime and startup reconciliation.');
     if (this.options.installed === true) {
+      this.#ready = false;
       const reconciled = await this.options.actuator.initialize(config.chargers);
-      if (!reconciled.ok) { this.#ready = false; throw new Error('Ownership reconciliation failed.'); }
+      if (!reconciled.ok) throw new Error('Ownership reconciliation failed.');
       if (this.#stopped) throw new Error('A stopped live runtime cannot be reconfigured.');
       this.resetTelemetry();
     }
@@ -129,7 +131,10 @@ export class LiveRuntime {
     const previous = this.#config;
     this.#config = structuredClone(config);
     this.#manager = new LoadManager(this.#config, `${this.options.idProvider.nextId()}:`);
-    if (!this.#restoreEngine()) { this.#manager = manager; this.#config = previous; throw new Error('Ownership restoration failed.'); }
+    if (!this.#restoreEngine()) {
+      this.#manager = manager; this.#config = previous; this.#ready = false;
+      throw new Error('Ownership restoration failed.');
+    }
     this.#ready = true;
     if (lifecycle.preserveOverride !== false && manager.snapshot.overrideActive) this.#manager.applyManualOverride();
     if (this.options.installed !== true) this.#announced = false;

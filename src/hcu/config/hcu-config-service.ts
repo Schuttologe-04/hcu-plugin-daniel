@@ -15,6 +15,8 @@ export interface HcuConfigServiceOptions {
   readonly getSnapshot: () => RuntimeSnapshot;
   /** Runtime adapter must atomically swap its configuration before resolving. */
   readonly onConfigApplied: (config: AppConfig) => void | Promise<void>;
+  /** Fail closed if disk/runtime rollback cannot restore one coherent configuration. */
+  readonly onRecoveryFailed?: () => void | Promise<void>;
 }
 
 function booleanValue(value: unknown): boolean {
@@ -92,6 +94,7 @@ export function applyHcuConfigProperties(
 export class HcuConfigService {
   private config: AppConfig;
   private updateQueue: Promise<void> = Promise.resolve();
+  private recoveryFailed = false;
 
   public constructor(private readonly options: HcuConfigServiceOptions) {
     const validated = validateConfig(options.initialConfig);
@@ -124,6 +127,10 @@ export class HcuConfigService {
   }
 
   private async update(message: ConfigUpdateRequest): Promise<void> {
+    if (this.recoveryFailed) {
+      this.respondRecoveryFailure(message);
+      return;
+    }
     const validated = applyHcuConfigProperties(this.config, message.body.properties ?? {});
     if (!validated.ok) {
       this.respond(message, 'FAILED', 'Konfiguration ungültig. Änderungen vollständig verworfen; Host, Werte und editierbare Felder prüfen.',
@@ -146,14 +153,32 @@ export class HcuConfigService {
     try {
       await this.options.onConfigApplied(structuredClone(validated.value));
     } catch {
-      // Defensive rollback: normal runtime adapter swaps atomically and cannot fail.
-      try { await this.options.store.save(previous); } catch { /* Report safe failure. */ }
-      try { await this.options.onConfigApplied(structuredClone(previous)); } catch { /* Keep service config unchanged. */ }
+      let stored = false;
+      try { stored = (await this.options.store.save(previous)).ok; } catch { /* Recovery remains failed. */ }
+      if (!stored) {
+        // Do not reactivate an old runtime against a disk configuration that could not be restored.
+        await this.failRecovery(message);
+        return;
+      }
+      try { await this.options.onConfigApplied(structuredClone(previous)); }
+      catch { await this.failRecovery(message); return; }
       this.respond(message, 'FAILED', 'Runtime konnte Konfiguration nicht übernehmen. Bisheriger Stand wurde zur Wiederherstellung beibehalten.',
         'Runtime configuration update failed. The previous configuration was retained for recovery.');
       return;
     }
     this.config = validated.value;
     this.respond(message, 'APPLIED', 'Konfiguration gespeichert und übernommen.', 'Configuration persisted and applied.');
+  }
+
+  private respondRecoveryFailure(message: ConfigUpdateRequest): void {
+    this.respond(message, 'FAILED',
+      'Konfiguration konnte nicht sicher wiederhergestellt werden. Regelung gesperrt; Persistenz prüfen und Plugin neu starten.',
+      'Configuration recovery failed. Control is blocked; inspect persistence and restart the plugin.');
+  }
+
+  private async failRecovery(message: ConfigUpdateRequest): Promise<void> {
+    this.recoveryFailed = true;
+    try { await this.options.onRecoveryFailed?.(); } catch { /* Report without native details; updates stay blocked. */ }
+    this.respondRecoveryFailure(message);
   }
 }

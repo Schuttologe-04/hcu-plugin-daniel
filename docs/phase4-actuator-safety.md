@@ -1,5 +1,7 @@
 # Phase 4 – Actuator, Ownership und sicherer LIVE-Gate
 
+Fortschreibung 0.2.1: Der Installed-Modus erlaubt die Korrektur einer nie gesteuerten Seed-Bindung bei ausschließlich telemetriebedingtem `UNKNOWN / CHARGER_STATUS_UNAVAILABLE`. Vollständige Evidenzprüfung, gesperrte Schutzfälle und Rollback-Verhalten stehen in [Erstkonfiguration und Migration](initial-configuration.md). Das ist keine Write-Freigabe; der vorbereitete Remote-LIVE-Pfad behält seine bisherige Bindungssperre.
+
 Phase 4 implementiert erstmals die Möglichkeit, reale go-e-Regelwerte zu schreiben. **Während der Entwicklung und automatisierten Tests wurden keine echten Charger-Writes ausgeführt. Der erste Hardware-Canary ist ausschließlich geplant.** Der vorbereitete LIVE-Modus startet keinen unbeaufsichtigten Regellauf und führt keine erste Aktion automatisch aus.
 
 Die verbindliche Projektidentität bleibt `com.psd.hcu.goe.loadmanagement`. Die bestehenden Phasen 1–3, Engine-Zustände, Prioritäten und Round Robin bleiben erhalten. HCU-Nachrichten und Geräteaktionen sind getrennte Schnittstellen.

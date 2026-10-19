@@ -1,5 +1,7 @@
 # Phase 5 – Installed HCU Plugin 0.1.0
 
+**Fortschreibung 0.2.1:** Paketnamen und Testzahlen weiter unten beschreiben den historischen 0.1.0-Stand. Der aktuelle Packaging-Pfad verwendet 0.2.1. Für Erstinstallation in einem anderen Netz enthält [initial-configuration.md](initial-configuration.md) den eng begrenzten Rebinding-Hotfix, die unveränderte Seed-Entscheidung und die weiterhin geschützten Ownership-Fälle. Persistiertes `/data` bleibt erhalten; es wird keine automatische Live-Aktivierung oder pauschale Gerätefreigabe ergänzt.
+
 Plugin-ID: `com.psd.hcu.goe.loadmanagement`, Herausgeber: `PSD`, Mindestversion der HCU: `1.4.7`, Scope: `LOCAL`.
 
 Diese Distribution besitzt reale go-e-Schreibfähigkeit. **Nach erster Installation ist die automatische Wallbox-Steuerung ausgeschaltet.** Installation, Start, Reconnect und Update erzeugen für sich allein keine Wallbox-Freigabe. Bestehende Einschränkungen werden niemals blind gelöscht. Bei bereits bewusst aktivierter persistierter Konfiguration bleiben nach Neustart Reconciliation und Telemetrie-Stabilisierung vorgeschaltet.
