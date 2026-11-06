@@ -17,6 +17,8 @@ export interface RuntimeSnapshot {
   readonly connectionState: string;
   readonly pluginVersion: string;
   readonly observedAtMs: number | null;
+  /** Start of the existing concurrent read, for bounded HCU display aggregation only. */
+  readonly probeStartedAtMs?: number;
   readonly probe: ProbeReport | null;
   readonly engine: EngineSnapshot | null;
   readonly lastDecision: EngineDecision | null;

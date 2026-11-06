@@ -58,7 +58,7 @@ export class HcuPluginApplication {
       throw new Error('WRITE_BLOCKED: explicit LIVE gate and actuator are required.');
     }
     const client = options.client;
-    this.devices = new PluginDeviceService({ config: options.config, sender: client, idProvider: options.idProvider,
+    this.devices = new PluginDeviceService({ config: options.config, sender: client, idProvider: options.idProvider, now: options.now,
       ...(options.logger === undefined ? {} : { logger: options.logger }) });
     this.#pluginState = new PluginStateService(client, options.idProvider, options.mode === 'INSTALLED_LIVE');
     this.messages = new HcuUserMessageService(client, options.idProvider, options.now);
@@ -116,7 +116,7 @@ export class HcuPluginApplication {
       onEndSession: () => this.interactions.endSession(),
       getInteractionStatus: () => ({ lastMessage: this.#lastHcuMessage, lastAnswer: this.interactions.lastAnswer }),
       onSnapshot: (snapshot) => {
-        this.#observeDevices(snapshot.probe);
+        this.#observeDevices(snapshot);
         if (client.state === 'READY' || client.state === 'CONNECTED') this.#reconcileInstalledMessages(false);
       },
       onError: () => options.logger?.warn('Installed polling cycle failed; existing restrictions remain protected'),
@@ -215,8 +215,13 @@ export class HcuPluginApplication {
     return pending;
   }
 
-  #observeDevices(report: ProbeReport | null): void {
-    try { this.devices.observe(report); }
+  #observeDevices(snapshot: RuntimeSnapshot): void {
+    try {
+      // Reconfiguration may republish the same snapshot. Its original timestamps
+      // remain intact, so it cannot become a new measurement or extend coverage.
+      this.devices.observe(snapshot.probe, snapshot.probeStartedAtMs === undefined || snapshot.observedAtMs === null
+        ? undefined : { sampledAtMs: snapshot.probeStartedAtMs, receivedAtMs: snapshot.observedAtMs });
+    }
     catch { this.options.logger?.warn('Plugin device snapshot could not be published'); }
   }
 

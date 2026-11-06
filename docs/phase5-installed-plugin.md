@@ -1,6 +1,6 @@
 # Phase 5 – Installed HCU Plugin 0.1.0
 
-**Fortschreibung 0.2.1:** Paketnamen und Testzahlen weiter unten beschreiben den historischen 0.1.0-Stand. Der aktuelle Packaging-Pfad verwendet 0.2.1. Für Erstinstallation in einem anderen Netz enthält [initial-configuration.md](initial-configuration.md) den eng begrenzten Rebinding-Hotfix, die unveränderte Seed-Entscheidung und die weiterhin geschützten Ownership-Fälle. Persistiertes `/data` bleibt erhalten; es wird keine automatische Live-Aktivierung oder pauschale Gerätefreigabe ergänzt.
+**Fortschreibung 0.2.2:** Paketnamen und Testzahlen weiter unten beschreiben den historischen 0.1.0-Stand. Der aktuelle Packaging-Pfad ist auf 0.2.2 vorbereitet; in diesem Entwicklungsauftrag wird kein Paket erzeugt. [energy-publishing-60s.md](energy-publishing-60s.md) beschreibt die neue HCU-Veröffentlichung von Minutenmitteln bei unverändert schneller interner Telemetrie. Für Erstinstallation in einem anderen Netz enthält [initial-configuration.md](initial-configuration.md) weiterhin den eng begrenzten 0.2.1-Rebinding-Hotfix, die unveränderte Seed-Entscheidung und die geschützten Ownership-Fälle. Persistiertes `/data` bleibt erhalten; es wird keine automatische Live-Aktivierung oder pauschale Gerätefreigabe ergänzt.
 
 Plugin-ID: `com.psd.hcu.goe.loadmanagement`, Herausgeber: `PSD`, Mindestversion der HCU: `1.4.7`, Scope: `LOCAL`.
 

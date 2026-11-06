@@ -179,25 +179,35 @@ const positiveSolarReport = { ...report, controller: { ok: true, value: { ...con
 assert.equal(powerFeature(projectDevice(registry[2], positiveSolarReport)).currentPower, -500, 'Solar inversion must not use an absolute value.');
 const deviceMessages = [];
 let deviceMessageId = 0;
+let deviceNow = 0;
 const devices = new PluginDeviceService({ config: seed.value,
   sender: { pluginId: environment.value.pluginId, send: message => { deviceMessages.push(message); return true; } },
   idProvider: { nextId: () => `MOCK_DEVICE_MESSAGE_${deviceMessageId += 1}` },
+  now: () => deviceNow,
 });
 devices.setConnectionState('READY');
-devices.observe(report);
+devices.observe(report, { sampledAtMs: deviceNow, receivedAtMs: deviceNow });
 assert.equal(deviceMessages.length, 0, 'Unknown inclusion state must not publish speculative events.');
 devices.handle({ pluginId: environment.value.pluginId, id: 'MOCK_DISCOVERY', type: 'DISCOVER_REQUEST', body: {} });
 assert.equal(deviceMessages.at(-1).type, 'DISCOVER_RESPONSE');
 assert.deepEqual(deviceMessages.at(-1).body.devices.map(device => device.deviceId), expectedDeviceIds);
+assert(deviceMessages.at(-1).body.devices.every(device => !Object.hasOwn(powerFeature(device), 'currentPower')), 'Discovery must not bypass the first minute with raw telemetry.');
 devices.handle({ pluginId: environment.value.pluginId, id: 'MOCK_INCLUSION', type: 'INCLUSION_EVENT', body: { deviceIds: ['controller-grid', 'charger-garage'] } });
 assert.equal(deviceMessages.at(-1).type, 'STATUS_RESPONSE');
 const beforeRepeatedMeasurement = deviceMessages.length;
-devices.observe(report);
+devices.observe(report, { sampledAtMs: deviceNow, receivedAtMs: deviceNow });
 assert.equal(deviceMessages.length, beforeRepeatedMeasurement, 'Equal projected measurements must be deduplicated.');
-devices.observe({ ...report, chargers: chargerReadings.map(charger => charger.status === 'reachable' && charger.config.id === 'garage'
-  ? { ...charger, value: { ...charger.value, currentPowerW: 1500 } } : charger) });
+const changedReport = { ...report, chargers: chargerReadings.map(charger => charger.status === 'reachable' && charger.config.id === 'garage'
+  ? { ...charger, value: { ...charger.value, currentPowerW: 1500 } } : charger) };
+for (deviceNow = 2_000; deviceNow < 60_000; deviceNow += 2_000) {
+  devices.observe(changedReport, { sampledAtMs: deviceNow, receivedAtMs: deviceNow });
+  assert.equal(deviceMessages.length, beforeRepeatedMeasurement, 'Fast samples must not publish raw power within a minute.');
+}
+devices.observe(changedReport, { sampledAtMs: deviceNow, receivedAtMs: deviceNow });
 assert.equal(deviceMessages.at(-1).type, 'STATUS_EVENT');
-assert.deepEqual(deviceMessages.at(-1).body, { deviceId: 'charger-garage', features: [{ type: 'currentPower', currentPower: 1500 }] });
+assert.deepEqual(deviceMessages.at(-1).body, { deviceId: 'charger-garage', features: [{ type: 'currentPower', currentPower: 1483 }] }, 'Minute mean must weight the first two seconds at 1000 W and the remaining 58 seconds at 1500 W.');
+devices.handle({ pluginId: environment.value.pluginId, id: 'MOCK_CACHED_MINUTE', type: 'STATUS_REQUEST', body: { deviceIds: ['charger-garage'] } });
+assert.equal(powerFeature(deviceMessages.at(-1).body.devices[0]).currentPower, 1483, 'Explicit status must return the completed minute, not the latest 1500 W sample.');
 for (const deviceId of expectedDeviceIds) {
   const requestId = `MOCK_CONTROL_${deviceId}`;
   devices.handle({ pluginId: environment.value.pluginId, id: requestId, type: 'CONTROL_REQUEST', body: {
@@ -210,4 +220,4 @@ for (const deviceId of expectedDeviceIds) {
 assert.equal(networkAttempts, 0, 'Imports/persistence must not contact any device.');
 assert.equal(attemptedWrites, 0, 'Default-disabled installed mode must not request a control write.');
 assert.equal(mockedStatusReads, 4, 'Both reachable chargers must be read on first start and restart.');
-console.log(JSON.stringify({ status: 'CONTAINER_MOCK_SMOKE_PASSED', platform: 'linux/arm64', nodeVersion: process.versions.node, mountedRuntimeFiles: true, installedEntrypoint: true, configRestart: true, ownershipRestart: true, messageRestart: true, deviceProjection: true, discoveredDevices: expectedDeviceIds.length, readOnlyDeviceControl: true, mockedStatusReads, networkAttempts, realHardwareWrites: 0 }));
+console.log(JSON.stringify({ status: 'CONTAINER_MOCK_SMOKE_PASSED', platform: 'linux/arm64', nodeVersion: process.versions.node, mountedRuntimeFiles: true, installedEntrypoint: true, configRestart: true, ownershipRestart: true, messageRestart: true, deviceProjection: true, minutePowerPublishing: true, discoveredDevices: expectedDeviceIds.length, readOnlyDeviceControl: true, mockedStatusReads, networkAttempts, realHardwareWrites: 0 }));

@@ -15,6 +15,7 @@ function incoming(type: string, body: Readonly<Record<string, unknown>> = {}, id
 }
 
 function setup() {
+  const clock = { now: 0 };
   const sent: HcuEnvelope[] = [];
   const state = { refuses: false, throws: false };
   const send = vi.fn((message: HcuEnvelope): boolean => {
@@ -24,13 +25,21 @@ function setup() {
   });
   let sequence = 0;
   const service = new PluginDeviceService({ config: makeConfig(), sender: { pluginId: PLUGIN_ID, send },
-    idProvider: { nextId: () => `device-event-${++sequence}` } });
+    idProvider: { nextId: () => `device-event-${++sequence}` }, now: () => clock.now });
   const ofType = (type: string) => sent.filter(message => message.type === type);
   const include = (ids = ['charger-garage']) => {
     service.setConnectionState('CONNECTED'); service.observe(telemetry());
     service.handle(incoming('INCLUSION_EVENT', { deviceIds: ids }, 'inclusion-event'));
   };
-  return { service, sent, send, state, ofType, include };
+  const sample = (at: number, report = telemetry()) => {
+    clock.now = at; service.observe(report, { sampledAtMs: at, receivedAtMs: at });
+  };
+  const minute = (start: number, report = telemetry()) => {
+    for (let at = start + 2_000; at <= start + 60_000; at += 2_000) sample(at, report);
+  };
+  const powerEvents = () => ofType('STATUS_EVENT').filter(message =>
+    (message.body?.['features'] as readonly { type: string }[]).some(feature => feature.type === 'currentPower'));
+  return { service, sent, send, state, ofType, include, clock, sample, minute, powerEvents };
 }
 
 function devices(message: HcuEnvelope | undefined): readonly PluginDevice[] {
@@ -87,44 +96,46 @@ describe('Connect API sensor device lifecycle and bounded publication', () => {
     expect(devices(c.sent.at(-1))).toEqual([]);
   });
 
-  it('deduplicates projected watts and sends only actually changed features', () => {
+  it('deduplicates completed rounded means, never each changed raw sample', () => {
     const c = setup(); c.include();
-    for (const watts of [1000, 1000.2, 1000.49]) c.service.observe(telemetry(makeConfig(), watts));
+    for (let at = 2000; at < 60_000; at += 2000) c.sample(at, telemetry(makeConfig(), 1000.2));
     expect(c.ofType('STATUS_EVENT')).toHaveLength(0);
-    c.service.observe(telemetry(makeConfig(), 1500));
-    expect(c.ofType('STATUS_EVENT')[0]?.body).toEqual({ deviceId: 'charger-garage', features: [{ type: 'currentPower', currentPower: 1500 }] });
-    c.service.observe(telemetry(makeConfig(), 1500.2));
+    c.sample(60_000, telemetry(makeConfig(), 1000.49));
+    expect(c.ofType('STATUS_EVENT')[0]?.body).toEqual({ deviceId: 'charger-garage', features: [{ type: 'currentPower', currentPower: 1000 }] });
+    c.minute(60_000, telemetry(makeConfig(), 1000.2));
     expect(c.ofType('STATUS_EVENT')).toHaveLength(1);
-    c.service.observe(telemetry(makeConfig(), 1501));
+    c.minute(120_000, telemetry(makeConfig(), 1001));
     expect(c.ofType('STATUS_EVENT')).toHaveLength(2);
     expect(c.ofType('STATUS_EVENT')[0]?.id).not.toBe(c.ofType('STATUS_EVENT')[1]?.id);
   });
 
   it('does not turn missing power into zero, but later publishes a real zero', () => {
     const c = setup(); c.include();
-    c.service.observe(telemetry(makeConfig(), null));
+    c.minute(0, telemetry(makeConfig(), null));
     expect(c.ofType('STATUS_EVENT')).toHaveLength(0);
     c.service.handle(incoming('STATUS_REQUEST', { deviceIds: ['charger-garage'] }));
     expect(devices(c.sent.at(-1))[0]?.features).toEqual([{ type: 'currentPower' }, { type: 'maintenance', unreach: false }]);
     expect(JSON.stringify(c.sent.at(-1))).not.toContain('currentPower":0');
-    c.service.observe(telemetry(makeConfig(), 0));
+    c.sample(62_000, telemetry(makeConfig(), 0));
+    c.minute(62_000, telemetry(makeConfig(), 0));
     expect(c.ofType('STATUS_EVENT').at(-1)?.body).toEqual({ deviceId: 'charger-garage', features: [{ type: 'currentPower', currentPower: 0 }] });
   });
 
-  it('publishes offline Maintenance only and combines recovery reachability with new power atomically', () => {
+  it('publishes failure and recovery Maintenance immediately without attaching raw power', () => {
     const c = setup(); c.include(['controller-grid', 'controller-home', 'controller-solar']);
-    c.service.observe({ ...telemetry(), controller: failure('TimeoutError', 'Offline') });
+    c.sample(2000, { ...telemetry(), controller: failure('TimeoutError', 'Offline') });
     expect(c.ofType('STATUS_EVENT')).toHaveLength(3);
     for (const message of c.ofType('STATUS_EVENT')) expect(message.body?.['features']).toEqual([{ type: 'maintenance', unreach: true }]);
-    c.service.observe(telemetry());
+    c.sample(4000);
     for (const message of c.ofType('STATUS_EVENT').slice(3)) expect(message.body?.['features']).toEqual([{ type: 'maintenance', unreach: false }]);
-    c.service.observe({ ...telemetry(), controller: failure('ConnectionError', 'Offline again') });
+    c.sample(6000, { ...telemetry(), controller: failure('ConnectionError', 'Offline again') });
     const changed = telemetry();
     if (!changed.controller.ok) throw new Error('Expected fixture controller');
-    c.service.observe({ ...changed, controller: { ok: true, value: { ...changed.controller.value, gridPowerW: -500, gridImportW: 0 } } });
+    c.sample(8000, { ...changed, controller: { ok: true, value: { ...changed.controller.value, gridPowerW: -500, gridImportW: 0 } } });
     expect(c.ofType('STATUS_EVENT').findLast(message => message.body?.['deviceId'] === 'controller-grid')?.body?.['features']).toEqual([
-      { type: 'currentPower', currentPower: -500 }, { type: 'maintenance', unreach: false },
+      { type: 'maintenance', unreach: false },
     ]);
+    expect(c.powerEvents()).toHaveLength(0);
   });
 
   it('excludes only logical devices and never publishes them again unless reincluded', () => {
@@ -134,7 +145,10 @@ describe('Connect API sensor device lifecycle and bounded publication', () => {
     expect(c.ofType('STATUS_EVENT')).toHaveLength(0);
     expect(c.service.includedDeviceIds).toEqual(['charger-links']);
     c.service.handle(incoming('INCLUSION_EVENT', { deviceIds: ['charger-garage'] }));
-    expect(devices(c.ofType('STATUS_RESPONSE').at(-1))[0]?.features[0]).toEqual({ type: 'currentPower', currentPower: 2000 });
+    expect(devices(c.ofType('STATUS_RESPONSE').at(-1))[0]?.features[0]).toEqual({ type: 'currentPower' });
+    c.minute(0, telemetry(makeConfig(), 2000));
+    expect(c.powerEvents()).toHaveLength(1);
+    expect(c.powerEvents()[0]?.body?.['deviceId']).toBe('charger-garage');
   });
 
   it('discards inclusion on disconnect and waits for fresh Inclusion after reconnect', () => {
@@ -147,11 +161,13 @@ describe('Connect API sensor device lifecycle and bounded publication', () => {
     c.service.observe(telemetry(makeConfig(), 2000));
     expect(c.ofType('STATUS_EVENT')).toHaveLength(0);
     c.service.handle(incoming('STATUS_REQUEST', { deviceIds: ['charger-garage'] }, 'explicit'));
-    expect(devices(c.sent.at(-1))[0]?.features[0]).toEqual({ type: 'currentPower', currentPower: 2000 });
+    expect(devices(c.sent.at(-1))[0]?.features[0]).toEqual({ type: 'currentPower' });
     expect(c.service.inclusionKnown).toBe(false);
     c.service.handle(incoming('INCLUSION_EVENT', { deviceIds: ['charger-garage'] }));
     c.service.observe(telemetry(makeConfig(), 3000));
-    expect(c.ofType('STATUS_EVENT')).toHaveLength(1);
+    expect(c.powerEvents()).toHaveLength(0);
+    c.minute(0, telemetry(makeConfig(), 3000));
+    expect(c.powerEvents()).toHaveLength(1);
   });
 
   it.each(['controller-grid', 'controller-home', 'controller-solar', 'charger-garage', 'charger-links', 'charger-rechts'])('rejects control for %s without any hardware boundary', (deviceId) => {
@@ -162,16 +178,19 @@ describe('Connect API sensor device lifecycle and bounded publication', () => {
     } }]);
   });
 
-  it('contains publisher throws per device and retries only changed unsent features on the next existing sample', () => {
+  it('contains publisher throws and retries unsent Maintenance, without replaying power windows', () => {
     const c = setup(); c.include(['charger-garage', 'charger-links']);
     c.state.throws = true;
-    expect(() => c.service.observe(telemetry(makeConfig(), 2000))).not.toThrow();
+    const offline = { ...telemetry(), chargers: telemetry().chargers.map(charger => charger.config.id !== 'garage' ? charger : {
+      status: 'unavailable' as const, reachable: false as const, config: charger.config, error: { code: 'TimeoutError' as const, message: 'Offline' },
+    }) };
+    expect(() => c.sample(2000, offline)).not.toThrow();
     expect(c.service.lastPublishError).toBe('HCU_DEVICE_PUBLISH_FAILED');
     c.state.throws = false;
-    c.service.observe(telemetry(makeConfig(), 2000));
+    c.sample(4000, offline);
     expect(c.ofType('STATUS_EVENT')).toHaveLength(1);
     expect(c.service.lastPublishError).toBe(null);
-    c.service.observe(telemetry(makeConfig(), 2000));
+    c.sample(6000, offline);
     expect(c.ofType('STATUS_EVENT')).toHaveLength(1);
   });
 

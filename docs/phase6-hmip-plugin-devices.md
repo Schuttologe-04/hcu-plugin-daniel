@@ -1,5 +1,7 @@
 # Version 0.2.0 – Homematic-IP-Messgeräte
 
+**Fortschreibung 0.2.2:** Dieses Dokument bewahrt den ursprünglichen 0.2.0-Gerätevertrag und dessen damaligen Abnahmestand. Der aktuelle Quellcode ersetzt schnelle CurrentPower-Änderungsereignisse durch zeitgewichtete 60-Sekunden-Mittelwerte; insbesondere Live-Power-Verhalten, Reconnect und Cache-Aussagen weiter unten sind historisch zu lesen. Die gültige Veröffentlichungspolitik, die unveränderten Geräteidentitäten und der noch offene reale 0.2.2-Abnahmestand stehen in [energy-publishing-60s.md](energy-publishing-60s.md). Das aktuelle Packaging-Rezept verwendet 0.2.2, wird in diesem Entwicklungsauftrag aber nicht ausgeführt.
+
 Diese Version ist technisch vorbereitet und noch nicht auf der realen HCU/App abgenommen. Die vom Nutzer bereits installierte und funktional geprüfte Version 0.1.0 bleibt die Referenz für Lastmanagement und Safety. Plugin-ID `com.psd.hcu.goe.loadmanagement`, Issuer PSD, HCU mindestens 1.4.7 und Scope LOCAL bleiben unverändert.
 
 ## Architektur und Datenquellen

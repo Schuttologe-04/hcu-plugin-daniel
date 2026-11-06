@@ -30,7 +30,7 @@ try {
   const seed = JSON.parse(await readFile(join(root, 'config.installed.json'), 'utf8'));
   if (seed?.loadManagement?.liveControlEnabled !== false) throw new Error('Installed seed must disable automatic real control.');
   const metadata = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
-  if (metadata.version !== '0.2.1') throw new Error('Package version must be 0.2.1.');
+  if (metadata.version !== '0.2.2') throw new Error('Package version must be 0.2.2.');
   console.log(JSON.stringify({ status: 'PACKAGE_INPUTS_CHECKED', admittedFiles: admitted.length, privateDevelopmentFilesRead: false }));
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'Package input validation failed.');

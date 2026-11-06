@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.2.2 – Released 06.11.2026
+
+### Changed
+
+- Reguläre HCU-CurrentPower-Meldungen verwenden zeitgewichtete 60-Sekunden-Mittelwerte aus den bestehenden schnellen Telemetrie-Snapshots statt jeder gerundeten Live-Wertänderung. Geräte-IDs, Gerätetypen und Features bleiben erhalten.
+- Pro Messreihe begrenzte In-Memory-Aggregation: höchstens vier Sekunden Gültigkeit je Messung, mindestens 54 von 60 Sekunden gültige Fensterabdeckung, keine künstlichen Nullwerte und keine Nachholung alter Fenster nach Unterbrechungen.
+- HCU-Statusantworten und Inclusion verwenden ausschließlich fachlich gültige aggregierte Leistungswerte; Maintenance-/Erreichbarkeitsänderungen bleiben zeitnah und übertragen keinen zusätzlichen schnellen Leistungswert.
+- Energie-Dashboard und HmIP-Automationen erhalten Minutenmittel statt Momentanwerten. Die daraus folgende langsamere Automationsreaktion ist beabsichtigt; Mittelwerte sind keine sicherheitskritische Echtzeittelemetrie.
+- Version und Packaging-Metadaten auf 0.2.2 vorbereitet; kein ARM64-Paket, Upload oder Release in diesem Entwicklungsauftrag.
+
+### Safety und Grenzen
+
+- Installed-Polling, Telemetriefrische, LoadManager, Trigger, Prioritäten, Round Robin, Recovery, Ownership/Rebinding, JA/NEIN-Override und go-e-Write-Gates bleiben unverändert. Die Mittelwerte fließen ausschließlich zur HCU-Geräteprojektion.
+- Kein neuer go-e-Steuerpfad, keine zusätzlichen Polls oder Timer und keine neue persistente Datei.
+- Der Nutzer hat die bisherigen rund 1,8 Millionen Messdatensätze bereits manuell erfolgreich gelöscht. 0.2.2 implementiert keine historische Datenlöschung und behauptet keinen belegten Zusammenhang zwischen Datenmenge und App-Synchronisierungsfehlern.
+- HCU-eigene Statusanfragen können weiterhin zusätzliche Historieneinträge auslösen; die reale Plattformwirkung ist noch abzunehmen. Faktor 30 beschreibt den kontrollierten Offline-Vergleich regulärer Veröffentlichungen, keine Garantie für sämtliche HCU-Datensätze.
+
+### Prüfung
+
+- **1.785 Tests in 65 Dateien bestanden**, insgesamt 77 zusätzliche Fälle gegenüber dem 0.2.1-Stand. Typecheck, Build und Offline-Simulation erfolgreich; die 38 Packaging-Regressionen sind enthalten.
+- Zwei vollständig offline simulierte 14-Tage-Durchläufe mit jeweils 604.801 internen Snapshots: im stabilen Fall 3.024.000 bisherige gegenüber 100.800 neuen regulären Power-Ereignissen für fünf Geräte, exakt Faktor 30. Der Ausfall-/Reconnect-Fall wahrt mindestens 60 Sekunden Abstand und erzeugt keinen Nachholburst.
+- Sicherheitsprüfung: 34 geschützte Quellcodedateien bytegleich erhalten; keine neuen Write-Pfade, Poll-Loops oder Timer. Build-Eingabe-/Secret-Sanity erfolgreich. Kein ARM64-Containerlauf, Hardwarezugriff, Deployment oder Git-Vorgang. [Vollständiger Nachweis und offene HCU-Abnahme](docs/energy-publishing-60s.md).
+
 ## 0.2.1 – Released 19.10.2026
 
 ### Fixed

@@ -159,7 +159,7 @@ export class LiveRuntime {
         chargers: report.chargers.flatMap((charger) => charger.status === 'disabled' ? []
           : [{ chargerId: charger.config.id, status: charger.status === 'reachable' ? success(charger.value) : { ok: false as const, error: charger.error } }]),
       });
-      this.#snapshot = { ...this.#snapshot, observedAtMs: now, probe: report, engine: decision.status,
+      this.#snapshot = { ...this.#snapshot, observedAtMs: now, probeStartedAtMs: start, probe: report, engine: decision.status,
         lastDecision: decision, lastAction: decision.action ?? this.#snapshot.lastAction };
       if (decision.action !== null) this.journal.append({ timestamp: now, engineState: decision.state,
         gridImportW: decision.status.gridImportW, action: decision.action, chargerSnapshotSummary: this.#summaries() });

@@ -1,6 +1,8 @@
-# Homematic IP HCU / go-e – Version 0.2.1
+# Homematic IP HCU / go-e – Version 0.2.2
 
 Dieses TypeScript-/Node.js-Plugin läuft als Installed-ARM64-Container auf der Homematic IP HCU. Der go-e Controller misst den Netzbezug; die bewährte Lastmanagement-Engine regelt aktivierte Charger über den geschützten `tcl`-/`frc`-Actuator. **Version 0.1.0 wurde vom Nutzer auf der realen HCU installiert und funktional geprüft.** Sie bleibt die unveränderte Referenz für Regelung, Ownership und Safety.
+
+**Version 0.2.2 begrenzt die reguläre HCU-Leistungswertübertragung auf 60-Sekunden-Mittelwerte.** Die interne Geräteabfrage, Telemetriefrische und Lastregelung bleiben unverändert schnell. Zeitgewichtete Mittelwerte verwenden nur gültige Messabschnitte mit mindestens 90 % Fensterabdeckung; fehlende Werte sind niemals 0 W. Maintenance bleibt zeitnah, bestehende Geräte-IDs bleiben erhalten. HmIP-Automationen und das Energie-Dashboard erhalten Minutenmittel statt Momentanwerten. Details, Statusanfragen, Offline-Nachweis und offene HCU-Abnahme: [energy-publishing-60s.md](docs/energy-publishing-60s.md). Kein ARM64-Paket oder Release ist Teil dieses Entwicklungsauftrags.
 
 **Version 0.2.1 korrigiert die Erstkonfiguration in einem anderen Netzwerk:** Ein reiner Erreichbarkeitsfehler vor jedem eigenen Write darf die Änderung der Seed-Adressen nicht blockieren. Bestehende Ownership-Evidenz, Konflikte und offene Writes bleiben geschützt. Der Seed und die vollständige Konfigurationsvalidierung bleiben unverändert; es entsteht kein neuer go-e-Schreibpfad. [Hotfix, Sicherheitsgrenze und Vorgehen](docs/initial-configuration.md).
 
@@ -318,9 +320,19 @@ Grid bleibt signiert; Home wird direkt angezeigt; Solar wird negiert. Charger-Le
 
 Inclusion ersetzt den aktuellen Included-Set-Snapshot, Exclusion beendet ausschließlich logische Publikation. StatusRequests werden mit derselben Message-ID beantwortet. Laufende StatusEvents enthalten nur geänderte Features; nach Reconnect wartet die Projektion auf frische Inclusion. Sensor-ControlRequests werden mit `success=false` abgelehnt. Config, Ownership und Nachrichtensession aus 0.1.0 bleiben kompatibel; neue Geräte-Persistenz ist nicht nötig.
 
-Der aktuelle `npm run package:hcu`-Pfad erzeugt ein 0.2.1-ARM64-Paket neben vorhandenen älteren Archiven. Paketmetadaten allein belegen keinen bereits ausgeführten Build. Update mit erhaltenem `/data` prüfen. Numerische Automationsbedingungen wurden für 0.2.0 vom Nutzer bestätigt; tatsächliche OS-Push-Zustellung bleibt gesondert zu prüfen. [Gerätevertrag](docs/phase6-hmip-plugin-devices.md), [0.2.1-Erstkonfiguration](docs/initial-configuration.md).
+Der aktuelle `npm run package:hcu`-Pfad ist auf ein 0.2.2-ARM64-Paket neben vorhandenen älteren Archiven vorbereitet; in diesem Entwicklungsauftrag wird er nicht ausgeführt. Paketmetadaten allein belegen keinen bereits ausgeführten Build. Update mit erhaltenem `/data` prüfen. Numerische Automationsbedingungen wurden für 0.2.0 vom Nutzer bestätigt; tatsächliche OS-Push-Zustellung bleibt gesondert zu prüfen. [Gerätevertrag](docs/phase6-hmip-plugin-devices.md), [0.2.1-Erstkonfiguration](docs/initial-configuration.md).
 
 Der [technische 0.2.0-Abschlussbericht](docs/version-0.2.0-completion-report.md) enthält die 1.585 bestandenen Tests, tatsächliche ARM64-Image-ID, Archiv-Prüfsumme, Dateiliste und den Git-/Safety-Audit.
+
+## Version 0.2.2 – HCU-Minutenmittelwerte
+
+Der bestehende Snapshot-Hook speist eine begrenzte In-Memory-Aggregation je virtueller Messreihe. Gültige rohe Wattwerte werden zeitgewichtet; jeder Abschnitt darf höchstens vier Sekunden gelten. Erst das abgeschlossene 60-Sekunden-Fenster mit mindestens 54 Sekunden gültiger Abdeckung liefert einen gerundeten HCU-Wert. Start, Ausfall, Wiederkehr und Reconnect erzeugen keine künstlichen Nullwerte, Live-Power-Events oder nachträglichen Fenster-Bursts. Pflichtantworten an die HCU bleiben vollständig; ein optionaler Leistungswert fehlt, solange kein fachlich gültiger publizierbarer Minutenmittelwert vorliegt.
+
+Die IDs, Gerätetypen und Features der bestehenden HmIP-Messgeräte ändern sich nicht. Der 0.2.1-Rebinding-Fix, alle Config-/Ownership-/Session-Dateien und das operative Live-Gate bleiben erhalten. Es gibt keine neue Konfigurationsoption, Datenbank, Persistenz oder weitere Hardwareabfrage. Die bisherigen rund 1,8 Millionen Messdatensätze wurden laut Nutzer bereits manuell gelöscht; 0.2.2 verwaltet oder löscht keine Messhistorie.
+
+HmIP-Automationen auf `CurrentPower` reagieren künftig im Minutentakt auf einen Durchschnitt und eignen sich damit nicht als sicherheitskritische Echtzeitmessung. Das go-e-Lastmanagement arbeitet weiterhin ausschließlich mit seiner bisherigen frischen Telemetrie. Die Wirkung zusätzlicher HCU-Anfragen auf die Messhistorie ist ohne reale HCU-Abnahme nicht vollständig durch das Plugin kontrollierbar; eine garantierte Reduktion sämtlicher Historieneinträge um Faktor 30 wird nicht behauptet. [Berechnung, Grenzen und Abnahmeplan](docs/energy-publishing-60s.md).
+
+Offline-Nachweis für 0.2.2: **1.785 Tests in 65 Dateien**, Typecheck, Build und Simulation erfolgreich. Der stabile 14-Tage-Vergleich verarbeitet weiterhin 604.801 interne Snapshots; reguläre Power-Ereignisse für fünf Geräte sinken von 3.024.000 auf 100.800, exakt Faktor 30. Packaging-Regressionen sind enthalten; es wurde kein ARM64-Paket erzeugt und keine reale HCU kontaktiert.
 
 ## Offene Punkte vor der ersten manuellen Aktivierung
 

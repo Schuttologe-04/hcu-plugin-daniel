@@ -4,25 +4,39 @@ import type { ProbeReport } from '../../diagnostics/probe-service.js';
 import type { IdProvider } from '../id-provider.js';
 import type { HcuConnectionState, HcuEnvelope, HcuSender, IncomingHcuMessage } from '../message-types.js';
 import { createDeviceRegistry } from './device-registry.js';
-import { projectDevice } from './device-projection.js';
+import { projectDevice, readDevicePower } from './device-projection.js';
+import { PowerWindowAggregator, POWER_SAMPLE_MAX_AGE_MS } from './power-window.js';
 import type { DeviceDefinition, PluginDevice, PluginDeviceFeature } from './device-types.js';
 
 interface PublishedFeatures { readonly power: number | undefined; readonly unreach: boolean | undefined }
+interface Series {
+  readonly average: PowerWindowAggregator;
+  attemptedWindowEndMs: number | undefined;
+}
+
+export interface DeviceObservationTiming {
+  /** Conservative common start of the existing concurrent controller/charger read. */
+  readonly sampledAtMs: number;
+  readonly receivedAtMs: number;
+}
 
 export interface PluginDeviceServiceOptions {
   readonly config: AppConfig;
   readonly sender: HcuSender;
   readonly idProvider: IdProvider;
+  readonly now?: () => number;
   readonly logger?: Logger;
 }
 
-/** Bounded by configured identities; synchronous sends, no queue, polling or timer. */
+/** Bounded by configured identities; no sample queue, timer, polling or persistence. */
 export class PluginDeviceService {
   #definitions = new Map<string, DeviceDefinition>();
   #report: ProbeReport | null = null;
+  #timing: DeviceObservationTiming | undefined;
   #included = new Set<string>();
   #inclusionKnown = false;
   #connected = false;
+  readonly #series = new Map<string, Series>();
   readonly #published = new Map<string, PublishedFeatures>();
   #lastPublishError: string | null = null;
 
@@ -35,12 +49,17 @@ export class PluginDeviceService {
 
   configure(config: AppConfig): void {
     const next = new Map(createDeviceRegistry(config).map(definition => [definition.deviceId, definition]));
-    const binding = (definitions: Map<string, DeviceDefinition>): string => JSON.stringify([...definitions.values()].map(({ deviceId, source }) => ({ deviceId, source })));
-    if (binding(next) !== binding(this.#definitions)) this.#report = null;
+    for (const [id, definition] of next) {
+      // A stable logical ID must never inherit another host's integral or delivered value.
+      if (JSON.stringify(definition.source) !== JSON.stringify(this.#definitions.get(id)?.source)) {
+        this.#series.delete(id);
+        this.#published.delete(id);
+      }
+    }
     this.#definitions = next;
-    // A disabled/removed configuration has neither status nor unsolicited updates.
     for (const id of this.#included) if (!next.has(id)) this.#included.delete(id);
     for (const id of this.#published.keys()) if (!next.has(id)) this.#published.delete(id);
+    for (const id of this.#series.keys()) if (!next.has(id)) this.#series.delete(id);
   }
 
   setConnectionState(state: HcuConnectionState): void {
@@ -48,27 +67,61 @@ export class PluginDeviceService {
     if (!connected || !this.#connected) {
       this.#included.clear();
       this.#published.clear();
+      this.#series.clear();
       this.#inclusionKnown = false;
+      // Reconnect starts a new minute on the next actual observation, not an old snapshot.
+      this.#report = null;
+      this.#timing = undefined;
     }
     this.#connected = connected;
   }
 
-  /** Receives the existing validated poll result; never re-reads a physical device. */
-  observe(report: ProbeReport | null): void {
+  /** Consumes existing poll results. HCU requests never advance time integrals. */
+  observe(report: ProbeReport | null, timing?: DeviceObservationTiming): void {
+    const now = this.#now();
     this.#report = report;
+    this.#timing = timing ?? { sampledAtMs: now, receivedAtMs: now };
+    const completed = new Set<string>();
+    for (const [id, definition] of this.#definitions) {
+      if (!this.#connected) continue;
+      let series = this.#series.get(id);
+      if (series === undefined) {
+        series = { average: new PowerWindowAggregator(), attemptedWindowEndMs: undefined };
+        this.#series.set(id, series);
+      }
+      const source = projectDevice(definition, report);
+      const rawPower = readDevicePower(definition, report);
+      if (this.#values(source).unreach === true) {
+        // A physical disconnect must earn a new minute after recovery.
+        series.average.clear();
+        this.#forgetPower(id);
+        continue;
+      }
+      const window = series.average.observe(rawPower, this.#timing.sampledAtMs, this.#timing.receivedAtMs);
+      if (rawPower === undefined || !this.#fresh(now)) this.#forgetPower(id);
+      if (window !== undefined && window.endMs !== series.attemptedWindowEndMs) {
+        // No replay on later polls, including after a failed power send.
+        series.attemptedWindowEndMs = window.endMs;
+        completed.add(id);
+      }
+    }
     if (!this.#connected || !this.#inclusionKnown) return;
     for (const id of this.#included) {
-      const device = this.#device(id);
+      const device = this.#device(id, now);
       if (device === undefined) continue;
       const values = this.#values(device);
       const previous = this.#published.get(id);
       const features: PluginDeviceFeature[] = [];
-      if (values.power !== undefined && values.power !== previous?.power) features.push({ type: 'currentPower', currentPower: values.power });
+      if (completed.has(id) && values.power !== undefined && values.power !== previous?.power) {
+        features.push({ type: 'currentPower', currentPower: values.power });
+      }
       if (values.unreach !== undefined && values.unreach !== previous?.unreach) features.push({ type: 'maintenance', unreach: values.unreach });
       if (features.length === 0) continue;
       if (this.#send('STATUS_EVENT', this.options.idProvider.nextId(), { deviceId: id, features })) {
-        // An omitted power never overwrites the last actually delivered measurement.
-        this.#published.set(id, { power: values.power ?? previous?.power, unreach: values.unreach ?? previous?.unreach });
+        this.#published.set(id, {
+          power: features.some(feature => feature.type === 'currentPower') ? values.power : previous?.power,
+          unreach: values.unreach ?? previous?.unreach,
+        });
       }
     }
   }
@@ -99,13 +152,39 @@ export class PluginDeviceService {
     }
   }
 
-  #device(id: string): PluginDevice | undefined {
+  #now(): number { return (this.options.now ?? Date.now)(); }
+
+  #fresh(now: number): boolean {
+    const timing = this.#timing;
+    return timing !== undefined && Number.isSafeInteger(now) && Number.isSafeInteger(timing.sampledAtMs)
+      && Number.isSafeInteger(timing.receivedAtMs) && timing.sampledAtMs >= 0 && timing.receivedAtMs >= timing.sampledAtMs
+      && timing.receivedAtMs <= now && now - timing.sampledAtMs <= POWER_SAMPLE_MAX_AGE_MS;
+  }
+
+  #forgetPower(id: string): void {
+    const previous = this.#published.get(id);
+    if (previous !== undefined) this.#published.set(id, { power: undefined, unreach: previous.unreach });
+  }
+
+  #device(id: string, now = this.#now()): PluginDevice | undefined {
     const definition = this.#definitions.get(id);
-    return definition === undefined ? undefined : projectDevice(definition, this.#report);
+    if (definition === undefined) return undefined;
+    const current = projectDevice(definition, this.#report);
+    const fresh = this.#fresh(now);
+    const maintenance = current.features.find(feature => feature.type === 'maintenance');
+    const average = fresh && readDevicePower(definition, this.#report) !== undefined
+      ? this.#series.get(id)?.average.latest(now)?.powerW : undefined;
+    return { ...current, features: [
+      { type: 'currentPower', ...(average === undefined ? {} : { currentPower: Object.is(Math.round(average), -0) ? 0 : Math.round(average) }) },
+      // Explicit connection failures remain negative evidence even after a slow
+      // timeout. Freshness is required to assert recovery, never to hide failure.
+      fresh || maintenance?.unreach === true ? maintenance ?? { type: 'maintenance' } : { type: 'maintenance' },
+    ] };
   }
 
   #devices(ids: readonly string[]): readonly PluginDevice[] {
-    return [...new Set(ids)].flatMap(id => { const device = this.#device(id); return device === undefined ? [] : [device]; });
+    const now = this.#now();
+    return [...new Set(ids)].flatMap(id => { const device = this.#device(id, now); return device === undefined ? [] : [device]; });
   }
 
   #values(device: PluginDevice): PublishedFeatures {
@@ -128,9 +207,10 @@ export class PluginDeviceService {
         this.#lastPublishError = null;
         return true;
       }
-    } catch { /* Record a sanitized delivery failure; never expose payloads. */ }
+    } catch { /* Sanitized per-device failure; no payload or retry queue. */ }
     this.#lastPublishError = 'HCU_DEVICE_PUBLISH_FAILED';
     this.options.logger?.warn({ code: this.#lastPublishError, messageType: type }, 'Plugin device publication failed');
     return false;
   }
 }
+

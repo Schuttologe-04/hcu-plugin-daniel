@@ -93,12 +93,13 @@ afterEach(async () => {
   }
 });
 
-function fixture(options: { live?: boolean; grid?: { value: number }; offline?: boolean } = {}) {
+function fixture(options: { live?: boolean; grid?: { value: number }; offline?: boolean; schedulerClock?: boolean } = {}) {
   const config = makeConfig({ loadManagement: { liveControlEnabled: options.live ?? false } });
   const configured: AppConfig = { ...config, notifications: {
     intervention: false, interactive: false, controllerConnectionError: false, chargerConnectionError: false,
   } };
   const clock = { now: 0 };
+  const now = () => options.schedulerClock ? Date.now() : clock.now;
   const grid = options.grid ?? { value: 22_839 };
   const power = new Map([['garage', 11_000], ['links', 0]]);
   const observations = new Map(config.chargers.filter(charger => charger.enabled).map(charger => [charger.id,
@@ -125,10 +126,10 @@ function fixture(options: { live?: boolean; grid?: { value: number }; offline?: 
     }),
   };
   const controls: ChargerControlClient = { ...writes, readStatus: vi.fn(async charger =>
-    success({ ...actual(charger.id), readStartedAtMs: clock.now, observedAtMs: clock.now })) };
+    success({ ...actual(charger.id), readStartedAtMs: now(), observedAtMs: now() })) };
   let ownership: OwnershipDocument | null = null;
   const actuator = new ChargerActuator({ client: controls, gate: { executionMode: 'LIVE', realWritesEnabled: true },
-    now: () => clock.now, sleep: async () => undefined, store: {
+    now, sleep: async () => undefined, store: {
       load: async () => success(structuredClone(ownership)),
       save: async document => { ownership = structuredClone(document); return success(undefined); },
     } });
@@ -157,7 +158,7 @@ function fixture(options: { live?: boolean; grid?: { value: number }; offline?: 
   const hcu = new MockHcu();
   const client = new HcuWebSocketClient({ ...transportSettings, webSocketFactory: hcu.factory, idProvider: new SequenceIds() });
   const app = new HcuPluginApplication({ client, config: configured, mode: 'INSTALLED_LIVE',
-    realWritesEnabled: true, liveActuator: actuator, now: () => clock.now, idProvider: new SequenceIds(), probe,
+    realWritesEnabled: true, liveActuator: actuator, now, idProvider: new SequenceIds(), probe,
     store: { load: async () => success(configured), save: async () => success(undefined) } });
   applications.push(app);
   return {
@@ -174,6 +175,11 @@ function deviceIds(message: CapturedMessage | undefined): string[] {
     if (!record(device) || typeof device['deviceId'] !== 'string') throw new Error('Expected device identifier');
     return device['deviceId'];
   });
+}
+
+function powerEvents(hcu: MockHcu): CapturedMessage[] {
+  return hcu.ofType('STATUS_EVENT').filter(message => Array.isArray(message.body['features'])
+    && message.body['features'].some((feature: unknown) => record(feature) && typeof feature['currentPower'] === 'number'));
 }
 
 describe('read-only HmIP devices in the installed application', () => {
@@ -198,10 +204,24 @@ describe('read-only HmIP devices in the installed application', () => {
     expect(active.probe).toHaveBeenCalledTimes(10);
     expect(noProjection.probe).toHaveBeenCalledTimes(10);
     expect(active.hcu.ofType('STATUS_EVENT').length).toBeGreaterThan(0);
+    // The initial maintenance updates do not expose a raw sample before the first complete minute.
+    expect(powerEvents(active.hcu)).toHaveLength(0);
+    expect(noProjection.hcu.ofType('STATUS_EVENT')).toHaveLength(0);
+    // Continue through an average publication and recovery using the same raw inputs.
+    grid.value = 17_000;
+    for (let time = 36_000; time <= 60_000; time += 2_000) {
+      await active.step(time); await noProjection.step(time);
+      expect(active.app.installed!.engine.snapshot).toEqual(noProjection.app.installed!.engine.snapshot);
+      expect(active.app.snapshot.lastDecision?.action).toEqual(noProjection.app.snapshot.lastDecision?.action);
+      expect(active.actuator.states).toEqual(noProjection.actuator.states);
+    }
+    expect(active.writes.setTemporaryCurrentLimit.mock.calls.map(([charger, amps]) => [charger.id, amps]))
+      .toEqual(noProjection.writes.setTemporaryCurrentLimit.mock.calls.map(([charger, amps]) => [charger.id, amps]));
+    expect(powerEvents(active.hcu)).toHaveLength(5);
     expect(noProjection.hcu.ofType('STATUS_EVENT')).toHaveLength(0);
   });
 
-  it('a throwing status publisher does not stall the next four-second telemetry cycle or create an engine fault', async () => {
+  it('a throwing minute publisher does not stall the next two-second telemetry cycle or create an engine fault', async () => {
     const f = fixture({ live: true });
     await f.start(); await f.step(0);
     f.hcu.emit('INCLUSION_EVENT', 'included', { deviceIds: ALL_IDS }); await flush();
@@ -220,8 +240,49 @@ describe('read-only HmIP devices in the installed application', () => {
     expect(f.writes.setTemporaryCurrentLimit).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'garage' }), 12);
     expect(f.app.installed!.engine.state).toBe('LIMITING');
     expect(f.app.installed!.engine.snapshot.fault).toBeNull();
+    expect(failingSend.mock.calls.some(([message]) => message.type === 'STATUS_EVENT')).toBe(false);
+    f.grid.value = 18_500;
+    for (let time = 36_000; time <= 60_000; time += 2_000) await f.step(time);
     expect(f.app.devices.lastPublishError).toBe('HCU_DEVICE_PUBLISH_FAILED');
     expect(failingSend.mock.calls.some(([message]) => message.type === 'STATUS_EVENT')).toBe(true);
+    const pollsAfterFailedPublication = f.probe.mock.calls.length;
+    f.grid.value = 22_839;
+    await f.step(62_000);
+    expect(f.probe).toHaveBeenCalledTimes(pollsAfterFailedPublication + 1);
+    expect(f.writes.setTemporaryCurrentLimit).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'garage' }), 11);
+    expect(f.app.installed!.engine.state).toBe('LIMITING');
+    expect(f.app.installed!.engine.snapshot.fault).toBeNull();
+  });
+
+  it('the existing scheduler keeps two-second polls while all five sensors publish completed minutes only', async () => {
+    vi.setSystemTime(0);
+    const f = fixture({ schedulerClock: true, grid: { value: 17_000 } });
+    await f.start();
+    f.hcu.emit('INCLUSION_EVENT', 'minute-inclusion', { deviceIds: ALL_IDS }); await flush();
+    await vi.advanceTimersByTimeAsync(0);
+    const initialPolls = f.probe.mock.calls.length;
+    expect(initialPolls).toBe(1);
+    await vi.advanceTimersByTimeAsync(58_000);
+    expect(f.probe).toHaveBeenCalledTimes(30);
+    expect(powerEvents(f.hcu)).toHaveLength(0);
+    f.hcu.emit('STATUS_REQUEST', 'before-complete-minute', { deviceIds: ALL_IDS }); await flush();
+    expect(JSON.stringify(f.hcu.ofType('STATUS_RESPONSE').at(-1))).not.toContain('"currentPower":');
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(f.probe).toHaveBeenCalledTimes(31);
+    expect(powerEvents(f.hcu).map(message => message.body['deviceId'])).toEqual(ALL_IDS);
+    expect(f.countWrites()).toBe(0);
+    expect(f.fetchMock).not.toHaveBeenCalled();
+    f.hcu.emit('STATUS_REQUEST', 'completed-minute', { deviceIds: ALL_IDS }); await flush();
+    expect(JSON.stringify(f.hcu.ofType('STATUS_RESPONSE').at(-1))).toContain('"currentPower":17000');
+    const expectedPolls = f.probe.mock.calls.length;
+    for (let index = 0; index < 20; index += 1) f.hcu.emit('STATUS_REQUEST', `cached-minute-${index}`, { deviceIds: ALL_IDS });
+    await flush();
+    expect(f.probe).toHaveBeenCalledTimes(expectedPolls);
+    expect(powerEvents(f.hcu)).toHaveLength(5);
+    await f.app.stop();
+    const stoppedPolls = f.probe.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(f.probe).toHaveBeenCalledTimes(stoppedPolls);
   });
 
   it.each(ALL_IDS)('CONTROL_REQUEST for %s fails without actuator calls or additional polls', async id => {
@@ -261,7 +322,7 @@ describe('read-only HmIP devices in the installed application', () => {
     expect(f.app.devices.includedDeviceIds).toEqual(['controller-grid', 'charger-garage']);
     expect(deviceIds(f.hcu.ofType('STATUS_RESPONSE').at(-1))).toEqual(['controller-grid', 'charger-garage']);
     f.power.set('garage', 12_000); await f.step(4_000);
-    expect(f.hcu.ofType('STATUS_EVENT').at(-1)?.body['deviceId']).toBe('charger-garage');
+    expect(powerEvents(f.hcu)).toHaveLength(0);
     f.hcu.emit('EXCLUSION_EVENT', 'garage-excluded', { deviceIds: ['charger-garage'] }); await flush();
     const events = f.hcu.ofType('STATUS_EVENT').length;
     f.power.set('garage', 13_000); await f.step(8_000);
@@ -276,6 +337,7 @@ describe('read-only HmIP devices in the installed application', () => {
     f.hcu.emit('STATUS_REQUEST', 'explicit-after-reconnect', { deviceIds: ['controller-grid'] }); await flush();
     expect(f.hcu.ofType('STATUS_RESPONSE').at(-1)).toMatchObject({ id: 'explicit-after-reconnect' });
     expect(deviceIds(f.hcu.ofType('STATUS_RESPONSE').at(-1))).toEqual(['controller-grid']);
+    expect(JSON.stringify(f.hcu.ofType('STATUS_RESPONSE').at(-1))).not.toContain('"currentPower":');
     f.hcu.emit('INCLUSION_EVENT', 'fresh-inclusion', { deviceIds: ['charger-links'] }); await flush();
     expect(f.app.devices.includedDeviceIds).toEqual(['charger-links']);
     expect(deviceIds(f.hcu.ofType('STATUS_RESPONSE').at(-1))).toEqual(['charger-links']);
